@@ -538,17 +538,16 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     private function getFilterRules(): array
     {
-        $fields = $this->getProjectSetting('filter-field') ?? [];
-        $values = $this->getProjectSetting('filter-value') ?? [];
-        $instruments = $this->getProjectSetting('filter-instruments') ?? [];
+        $rows = $this->framework->getSubSettings('filter-rules') ?? [];
 
         $rules = [];
-        for ($i = 0; $i < count($fields); $i++) {
-            if (empty($fields[$i])) continue;
+        foreach ($rows as $row) {
+            $field = $row['filter-field'] ?? '';
+            if ($field === '') continue;
             $rules[] = [
-                'field' => $fields[$i],
-                'value' => $values[$i] ?? '',
-                'instruments' => $instruments[$i] ?? 'all'
+                'field' => $field,
+                'value' => $row['filter-value'] ?? '',
+                'instruments' => $row['filter-instruments'] ?? 'all',
             ];
         }
         return $rules;
