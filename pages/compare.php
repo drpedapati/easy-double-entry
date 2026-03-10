@@ -346,6 +346,11 @@ if ($urlEventId === 0) {
     });
 
     function doMerge(fieldName, value, sourceRound, comment) {
+        // Disable buttons for this field during merge
+        const row = document.querySelector('tr[data-field="' + fieldName + '"]');
+        const buttons = row ? row.querySelectorAll('button') : [];
+        buttons.forEach(b => { b.disabled = true; });
+
         module.ajax('merge-field', {
             record: currentComparison.record,
             instrument: currentComparison.instrument,
@@ -357,15 +362,16 @@ if ($urlEventId === 0) {
         }).then(function(result) {
             if (result.success) {
                 // Mark row as merged
-                const row = document.querySelector('tr[data-field="' + fieldName + '"]');
                 if (row) {
                     row.className = 'ede-merged';
                     row.querySelector('td:last-child').innerHTML = '<i class="fas fa-check-circle text-info"></i> Merged';
                 }
             } else {
+                buttons.forEach(b => { b.disabled = false; });
                 alert('Merge failed: ' + (result.error || 'unknown error'));
             }
         }).catch(function(err) {
+            buttons.forEach(b => { b.disabled = false; });
             alert('Error: ' + (err.message || err));
         });
     }

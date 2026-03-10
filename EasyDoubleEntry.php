@@ -6,8 +6,11 @@ use REDCap;
 
 class EasyDoubleEntry extends AbstractExternalModule
 {
+    /** @var int Instance number for Round 1 data entry */
     const ROUND_1 = 1;
+    /** @var int Instance number for Round 2 data entry */
     const ROUND_2 = 2;
+    /** @var int Instance number for the final merged record */
     const FINAL_INSTANCE = 3;
 
     private ?array $dashboardCache = null;
@@ -114,7 +117,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             case 'get-dde-stats':
                 return $this->ajaxGetDDEStats($project_id);
             case 'get-task-list':
-                return $this->ajaxGetTaskList($project_id, $payload);
+                return $this->ajaxGetTaskList($project_id);
             default:
                 return ['error' => 'Unknown action'];
         }
@@ -743,14 +746,17 @@ class EasyDoubleEntry extends AbstractExternalModule
         return $stats;
     }
 
-    private function ajaxGetTaskList(int $project_id, $payload): array
+    private function ajaxGetTaskList(int $project_id): array
     {
         return $this->getTaskList($project_id);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
 
-    private function valuesMatch($v1, $v2): bool
+    /**
+     * Compare two field values for equality after trimming whitespace.
+     */
+    private function valuesMatch(string|null $v1, string|null $v2): bool
     {
         return trim((string)$v1) === trim((string)$v2);
     }
