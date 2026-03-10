@@ -92,7 +92,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
             renderTable();
         }).catch(function(err) {
             document.getElementById('ede-dash-loading').innerHTML =
-                '<div class="alert alert-danger">Error loading dashboard: ' + (err.message || err) + '</div>';
+                '<div class="alert alert-danger">Error loading dashboard: ' + escapeHtml(err.message || String(err)) + '</div>';
         });
     }
 

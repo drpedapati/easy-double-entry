@@ -338,16 +338,14 @@ class EasyDoubleEntry extends AbstractExternalModule
         foreach ($comparison['fields'] as $field) {
             if ($field['match']) {
                 // Both match — safe to auto-merge
-                if ($field['round1_value'] !== '') {
-                    $saveRows[] = [
-                        $recordIdField => $record,
-                        'redcap_event_name' => $eventName,
-                        'redcap_repeat_instrument' => $instrument,
-                        'redcap_repeat_instance' => $targetInstance,
-                        $field['field_name'] => $field['round1_value']
-                    ];
-                    $merged++;
-                }
+                $saveRows[] = [
+                    $recordIdField => $record,
+                    'redcap_event_name' => $eventName,
+                    'redcap_repeat_instrument' => $instrument,
+                    'redcap_repeat_instance' => $targetInstance,
+                    $field['field_name'] => $field['round1_value']
+                ];
+                $merged++;
             } else {
                 $skipped++;
             }
@@ -388,6 +386,11 @@ class EasyDoubleEntry extends AbstractExternalModule
 
         $recordIdField = REDCap::getRecordIdField();
 
+        // Check if current user is in a DAG
+        $user = $this->framework->getUser();
+        $rights = $user->getRights();
+        $dagId = $rights['group_id'] ?? null;
+
         // Get filter rules up front so we can combine the record ID + filter field fetch
         $filterRules = $this->getFilterRules();
         $filterFields = array_unique(array_column($filterRules, 'field'));
@@ -400,6 +403,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             'return_format' => 'json'
         ];
         if ($filterRecord) $params['records'] = [$filterRecord];
+        if ($dagId) $params['groups'] = [$dagId];
 
         $allData = json_decode(REDCap::getData($params), true);
 
@@ -754,7 +758,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     private function getMergeTargetInstance(): int
     {
         $setting = $this->getProjectSetting('merge-target-instance');
-        return $setting == '3' ? self::FINAL_INSTANCE : self::ROUND_1;
+        return $setting == '1' ? self::ROUND_1 : self::FINAL_INSTANCE;
     }
 
     private function isRecordStatusDashboard(): bool
@@ -768,7 +772,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     private function buildFormUrl(string $record, string $instrument, int $event_id, int $instance): string
     {
         $pid = $this->framework->getProjectId();
-        return APP_PATH_WEBROOT . "DataEntry/index.php?pid={$pid}&page={$instrument}&id=" . urlencode($record) . "&event_id={$event_id}&instance={$instance}";
+        return APP_PATH_WEBROOT . "DataEntry/index.php?pid={$pid}&page=" . urlencode($instrument) . "&id=" . urlencode($record) . "&event_id={$event_id}&instance={$instance}";
     }
 
     public function getFirstEventId(): int

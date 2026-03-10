@@ -30,7 +30,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
     const module = <?= $jsModuleObj ?>;
     const compareUrl = <?= json_encode($module->getUrl('pages/compare.php')) ?>;
     const pid = <?= json_encode((string)$module->getProjectId()) ?>;
-    const event_id = <?= json_encode((string)$module->getFirstEventId()) ?>;
+    const fallbackEventId = <?= json_encode((string)$module->getFirstEventId()) ?>;
     const app_path_webroot = <?= json_encode(APP_PATH_WEBROOT) ?>;
 
     module.ajax('get-task-list', {}).then(function(tasks) {
@@ -49,12 +49,14 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
             const priorityClass = task.priority === 'high' ? 'ede-priority-high' : 'ede-priority-normal';
             const actionClass = isCompare ? 'ede-action-compare' : 'ede-action-enter';
             const icon = isCompare ? 'fa-not-equal' : 'fa-edit';
+            // Use event_id from the task data; fall back to first event for classic projects
+            const taskEventId = task.event_id || fallbackEventId;
 
             let href = '#';
             if (isCompare) {
-                href = compareUrl + '&record=' + encodeURIComponent(task.record) + '&instrument=' + encodeURIComponent(task.instrument);
+                href = compareUrl + '&record=' + encodeURIComponent(task.record) + '&instrument=' + encodeURIComponent(task.instrument) + '&event_id=' + encodeURIComponent(taskEventId);
             } else if (task.round_instance) {
-                href = app_path_webroot + 'DataEntry/index.php?pid=' + pid + '&page=' + encodeURIComponent(task.instrument) + '&id=' + encodeURIComponent(task.record) + '&event_id=' + event_id + '&instance=' + task.round_instance;
+                href = app_path_webroot + 'DataEntry/index.php?pid=' + pid + '&page=' + encodeURIComponent(task.instrument) + '&id=' + encodeURIComponent(task.record) + '&event_id=' + encodeURIComponent(taskEventId) + '&instance=' + task.round_instance;
             }
 
             html += '<a href="' + href + '" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ' + priorityClass + '">';
@@ -71,7 +73,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         document.getElementById('ede-task-content').innerHTML = html;
     }).catch(function(err) {
         document.getElementById('ede-task-loading').innerHTML =
-            '<div class="alert alert-danger">Error: ' + (err.message || err) + '</div>';
+            '<div class="alert alert-danger">Error: ' + escapeHtml(err.message || String(err)) + '</div>';
     });
 
     function escapeHtml(str) {

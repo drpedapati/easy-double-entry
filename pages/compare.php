@@ -3,6 +3,12 @@
 
 $module->initializeJavascriptModuleObject();
 $jsModuleObj = $module->getJavascriptModuleObjectName();
+
+// Accept event_id from URL params; fall back to first event for classic projects
+$urlEventId = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
+if ($urlEventId === 0) {
+    $urlEventId = $module->getFirstEventId();
+}
 ?>
 
 <style>
@@ -147,6 +153,8 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
 (function() {
     const module = <?= $jsModuleObj ?>;
     const requireComment = <?= json_encode((bool)$module->getProjectSetting('require-merge-comment')) ?>;
+    // Use event_id from URL params (resolved server-side), falling back to first event
+    const pageEventId = <?= json_encode($urlEventId) ?>;
     let currentComparison = null;
     let showDiscrepanciesOnly = false;
     let pendingMerge = null;
@@ -162,6 +170,15 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         loadComparison();
     }
 
+    function getEventId() {
+        // Once a comparison is loaded, use its event_id (authoritative from server).
+        // Otherwise use the URL-supplied or fallback event_id.
+        if (currentComparison && currentComparison.event_id) {
+            return currentComparison.event_id;
+        }
+        return pageEventId;
+    }
+
     function loadComparison() {
         const record = document.getElementById('ede-record').value.trim();
         const instrument = document.getElementById('ede-instrument').value;
@@ -175,13 +192,10 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         document.getElementById('ede-stats-row').style.display = 'none';
         document.getElementById('ede-actions-row').style.display = 'none';
 
-        // Get event_id from first available event (classic projects use the single event)
-        const event_id = <?= json_encode($module->getFirstEventId()) ?>;
-
         module.ajax('compare-rounds', {
             record: record,
             instrument: instrument,
-            event_id: event_id
+            event_id: getEventId()
         }).then(function(result) {
             document.getElementById('ede-loading').style.display = 'none';
             currentComparison = result;
@@ -209,7 +223,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         }).catch(function(err) {
             document.getElementById('ede-loading').style.display = 'none';
             document.getElementById('ede-compare-results').innerHTML =
-                '<div class="alert alert-danger">Error: ' + (err.message || err) + '</div>';
+                '<div class="alert alert-danger">Error: ' + escapeHtml(err.message || String(err)) + '</div>';
         });
     }
 
@@ -267,12 +281,10 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         if (!currentComparison) return;
         if (!confirm('Auto-merge all matching fields? This writes ' + currentComparison.matching_fields + ' field(s) to the final record.')) return;
 
-        const event_id = <?= json_encode($module->getFirstEventId()) ?>;
-
         module.ajax('merge-bulk', {
             record: currentComparison.record,
             instrument: currentComparison.instrument,
-            event_id: event_id
+            event_id: getEventId()
         }).then(function(result) {
             alert('Merged ' + result.merged + ' matching field(s). ' + result.skipped + ' discrepancies remaining.');
             loadComparison(); // Refresh
@@ -334,12 +346,10 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
     });
 
     function doMerge(fieldName, value, sourceRound, comment) {
-        const event_id = <?= json_encode($module->getFirstEventId()) ?>;
-
         module.ajax('merge-field', {
             record: currentComparison.record,
             instrument: currentComparison.instrument,
-            event_id: event_id,
+            event_id: getEventId(),
             field_name: fieldName,
             value: value,
             source_round: sourceRound,
