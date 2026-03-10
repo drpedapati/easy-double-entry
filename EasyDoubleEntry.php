@@ -10,6 +10,8 @@ class EasyDoubleEntry extends AbstractExternalModule
     const ROUND_2 = 2;
     const FINAL_INSTANCE = 3;
 
+    private ?array $dashboardCache = null;
+
     // ─── Hooks ───────────────────────────────────────────────────────
 
     /**
@@ -376,43 +378,38 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function getDashboardData(int $project_id, ?string $filterRecord = null): array
     {
+        // Only cache when fetching full project data (no filter)
+        if ($filterRecord === null && $this->dashboardCache !== null) {
+            return $this->dashboardCache;
+        }
+
         $ddeInstruments = $this->getDDEInstruments();
         if (empty($ddeInstruments)) return [];
 
         $recordIdField = REDCap::getRecordIdField();
 
-        // Get all records
+        // Get filter rules up front so we can combine the record ID + filter field fetch
+        $filterRules = $this->getFilterRules();
+        $filterFields = array_unique(array_column($filterRules, 'field'));
+
+        // Single call: fetch record IDs and filter field values together
+        $fetchFields = array_merge([$recordIdField], $filterFields);
         $params = [
             'project_id' => $project_id,
-            'fields' => [$recordIdField],
+            'fields' => array_unique($fetchFields),
             'return_format' => 'json'
         ];
         if ($filterRecord) $params['records'] = [$filterRecord];
 
         $allData = json_decode(REDCap::getData($params), true);
 
-        // Collect unique record IDs
+        // Extract records and filter data from the combined result
         $records = [];
-        foreach ($allData as $row) {
-            $records[$row[$recordIdField]] = true;
-        }
-        $records = array_keys($records);
-
-        // Get filter field values for each record
-        $filterRules = $this->getFilterRules();
-        $filterFields = array_unique(array_column($filterRules, 'field'));
-
         $filterData = [];
-        if (!empty($filterFields)) {
-            $fdata = json_decode(REDCap::getData([
-                'project_id' => $project_id,
-                'records' => $records,
-                'fields' => array_merge([$recordIdField], $filterFields),
-                'return_format' => 'json'
-            ]), true);
-
-            foreach ($fdata as $row) {
-                $rid = $row[$recordIdField];
+        foreach ($allData as $row) {
+            $rid = $row[$recordIdField];
+            $records[$rid] = true;
+            if (!empty($filterFields)) {
                 if (!isset($filterData[$rid])) $filterData[$rid] = [];
                 foreach ($filterFields as $ff) {
                     if (isset($row[$ff]) && $row[$ff] !== '') {
@@ -421,6 +418,7 @@ class EasyDoubleEntry extends AbstractExternalModule
                 }
             }
         }
+        $records = array_keys($records);
 
         // Fetch repeat instance data for DDE instruments specifically
         $ddeParams = [
@@ -431,14 +429,18 @@ class EasyDoubleEntry extends AbstractExternalModule
         if ($filterRecord) $ddeParams['records'] = [$filterRecord];
         $ddeData = json_decode(REDCap::getData($ddeParams), true);
 
-        // Build per-record instance map
-        $instanceMap = []; // record => instrument => [instances]
+        // Build event name => event_id map for resolving numeric IDs
+        $eventNameToId = $this->getEventNameToIdMap();
+
+        // Build per-record instance map: record => instrument => event_name => [instances]
+        $instanceMap = [];
         foreach ($ddeData as $row) {
             $rid = $row[$recordIdField];
             $inst = $row['redcap_repeat_instrument'] ?? '';
             $instNum = $row['redcap_repeat_instance'] ?? '';
+            $eventName = $row['redcap_event_name'] ?? '';
             if ($inst !== '' && in_array($inst, $ddeInstruments)) {
-                $instanceMap[$rid][$inst][] = (int)$instNum;
+                $instanceMap[$rid][$inst][$eventName][] = (int)$instNum;
             }
         }
 
@@ -450,28 +452,48 @@ class EasyDoubleEntry extends AbstractExternalModule
 
             $instrumentStatuses = [];
             foreach ($visibleInstruments as $instName) {
-                $instances = $instanceMap[$rid][$instName] ?? [];
-                $hasR1 = in_array(self::ROUND_1, $instances);
-                $hasR2 = in_array(self::ROUND_2, $instances);
-                $hasFinal = in_array(self::FINAL_INSTANCE, $instances);
+                $eventInstances = $instanceMap[$rid][$instName] ?? [];
 
-                $status = 'pending';
-                if ($hasFinal) {
-                    $status = 'merged';
-                } elseif ($hasR1 && $hasR2) {
-                    $status = 'ready_to_compare';
-                } elseif ($hasR1 || $hasR2) {
-                    $status = 'partial';
+                if (empty($eventInstances)) {
+                    // No data yet for this instrument — show as pending with no event
+                    $instrumentStatuses[] = [
+                        'instrument' => $instName,
+                        'instrument_label' => $this->getInstrumentLabel($instName),
+                        'event_name' => '',
+                        'event_id' => 0,
+                        'has_round1' => false,
+                        'has_round2' => false,
+                        'has_final' => false,
+                        'status' => 'pending'
+                    ];
+                    continue;
                 }
 
-                $instrumentStatuses[] = [
-                    'instrument' => $instName,
-                    'instrument_label' => $this->getInstrumentLabel($instName),
-                    'has_round1' => $hasR1,
-                    'has_round2' => $hasR2,
-                    'has_final' => $hasFinal,
-                    'status' => $status
-                ];
+                foreach ($eventInstances as $eventName => $instances) {
+                    $hasR1 = in_array(self::ROUND_1, $instances);
+                    $hasR2 = in_array(self::ROUND_2, $instances);
+                    $hasFinal = in_array(self::FINAL_INSTANCE, $instances);
+
+                    $status = 'pending';
+                    if ($hasFinal) {
+                        $status = 'merged';
+                    } elseif ($hasR1 && $hasR2) {
+                        $status = 'ready_to_compare';
+                    } elseif ($hasR1 || $hasR2) {
+                        $status = 'partial';
+                    }
+
+                    $instrumentStatuses[] = [
+                        'instrument' => $instName,
+                        'instrument_label' => $this->getInstrumentLabel($instName),
+                        'event_name' => $eventName,
+                        'event_id' => $eventNameToId[$eventName] ?? 0,
+                        'has_round1' => $hasR1,
+                        'has_round2' => $hasR2,
+                        'has_final' => $hasFinal,
+                        'status' => $status
+                    ];
+                }
             }
 
             $dashboard[] = [
@@ -480,6 +502,9 @@ class EasyDoubleEntry extends AbstractExternalModule
             ];
         }
 
+        if ($filterRecord === null) {
+            $this->dashboardCache = $dashboard;
+        }
         return $dashboard;
     }
 
@@ -498,6 +523,8 @@ class EasyDoubleEntry extends AbstractExternalModule
                         'record' => $row['record'],
                         'instrument' => $inst['instrument'],
                         'instrument_label' => $inst['instrument_label'],
+                        'event_name' => $inst['event_name'] ?? '',
+                        'event_id' => $inst['event_id'] ?? 0,
                         'action' => 'Enter Round 1',
                         'priority' => 'normal',
                         'round_instance' => self::ROUND_1
@@ -509,6 +536,8 @@ class EasyDoubleEntry extends AbstractExternalModule
                         'record' => $row['record'],
                         'instrument' => $inst['instrument'],
                         'instrument_label' => $inst['instrument_label'],
+                        'event_name' => $inst['event_name'] ?? '',
+                        'event_id' => $inst['event_id'] ?? 0,
                         'action' => "Enter $round",
                         'priority' => 'normal',
                         'round_instance' => $roundInstance
@@ -518,6 +547,8 @@ class EasyDoubleEntry extends AbstractExternalModule
                         'record' => $row['record'],
                         'instrument' => $inst['instrument'],
                         'instrument_label' => $inst['instrument_label'],
+                        'event_name' => $inst['event_name'] ?? '',
+                        'event_id' => $inst['event_id'] ?? 0,
                         'action' => 'Compare & Merge',
                         'priority' => 'high'
                     ];
@@ -747,6 +778,22 @@ class EasyDoubleEntry extends AbstractExternalModule
         $result = $this->query($sql, [$pid]);
         $row = $result->fetch_assoc();
         return (int)($row["event_id"] ?? 0);
+    }
+
+    /**
+     * Build a map of unique event name => numeric event_id for this project.
+     * REDCap::getEventNames(true) returns event_id => unique_event_name; we flip it.
+     */
+    private function getEventNameToIdMap(): array
+    {
+        $map = [];
+        $names = REDCap::getEventNames(true);
+        if (is_array($names)) {
+            foreach ($names as $eventId => $uniqueName) {
+                $map[(string)$uniqueName] = (int)$eventId;
+            }
+        }
+        return $map;
     }
 
     private function getInstrumentLabel(string $formName): string
