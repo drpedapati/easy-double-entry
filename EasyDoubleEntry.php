@@ -759,10 +759,12 @@ class EasyDoubleEntry extends AbstractExternalModule
     private function sendBothRoundsCompleteNotification(string $email, int $project_id, string $record, string $instrument): void
     {
         $label = $this->getInstrumentLabel($instrument);
-        $subject = "DDE Ready for Review — Record $record ($label)";
+        $safeRecord = htmlspecialchars($record, ENT_QUOTES, 'UTF-8');
+        $safeLabel = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+        $subject = "DDE Ready for Review — Record $safeRecord ($safeLabel)";
         $body = "Both Round 1 and Round 2 are complete for:<br><br>";
-        $body .= "<b>Record:</b> $record<br>";
-        $body .= "<b>Instrument:</b> $label<br><br>";
+        $body .= "<b>Record:</b> $safeRecord<br>";
+        $body .= "<b>Instrument:</b> $safeLabel<br><br>";
         $body .= "Please open the DDE Comparison & Merge page to review and adjudicate.";
 
         $fromEmail = $GLOBALS['homepage_contact_email'] ?? 'noreply@redcap.local';
