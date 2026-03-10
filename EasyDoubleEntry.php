@@ -88,6 +88,16 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     function redcap_module_ajax($action, $payload, $project_id, $record, $instrument, $event_id, $repeat_instance, $survey_hash, $response_id, $survey_queue_hash, $page, $page_full, $user_id, $group_id)
     {
+        // Write actions require data entry rights
+        $writeActions = ['merge-field', 'merge-bulk'];
+        if (in_array($action, $writeActions)) {
+            $user = $this->framework->getUser();
+            $rights = $user->getRights();
+            if (!$rights || $rights['data_entry'] === null) {
+                return ['error' => 'You do not have data entry rights in this project'];
+            }
+        }
+
         switch ($action) {
             case 'get-record-rounds':
                 return $this->ajaxGetRecordRounds($project_id, $payload);
@@ -577,16 +587,23 @@ class EasyDoubleEntry extends AbstractExternalModule
     }
 
     /**
-     * Inject JS to filter the Record Status Dashboard.
+     * Inject JS to add DDE status indicators to the Record Status Dashboard.
      */
     private function injectDashboardFilter(array $ddeInstruments): void
     {
         $instrumentsJson = json_encode($ddeInstruments);
+        $ddePageUrl = json_encode($this->getUrl('pages/dashboard.php'));
         echo "<script>
             $(document).ready(function() {
-                // Add DDE status indicators to the Record Status Dashboard
                 var ddeInstruments = {$instrumentsJson};
-                // Future: enhance dashboard columns with DDE status badges
+                // Add a link to the DDE Dashboard from the Record Status Dashboard
+                var banner = $('<div class=\"alert alert-info alert-dismissible\" style=\"margin-top:10px;\">' +
+                    '<i class=\"fas fa-columns mr-2\"></i>' +
+                    '<b>Double Data Entry enabled</b> for ' + ddeInstruments.length + ' instrument(s). ' +
+                    '<a href=' + {$ddePageUrl} + '>Open DDE Dashboard</a>' +
+                    '<button type=\"button\" class=\"close\" data-dismiss=\"alert\">&times;</button>' +
+                    '</div>');
+                $('#record_status_table').before(banner);
             });
         </script>";
     }
@@ -748,6 +765,7 @@ class EasyDoubleEntry extends AbstractExternalModule
         $body .= "<b>Instrument:</b> $label<br><br>";
         $body .= "Please open the DDE Comparison & Merge page to review and adjudicate.";
 
-        REDCap::email($email, 'noreply@redcap.local', $subject, $body);
+        $fromEmail = $GLOBALS['homepage_contact_email'] ?? 'noreply@redcap.local';
+        REDCap::email($email, $fromEmail, $subject, $body);
     }
 }

@@ -176,7 +176,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         document.getElementById('ede-actions-row').style.display = 'none';
 
         // Get event_id from first available event (classic projects use the single event)
-        const event_id = <?= json_encode((int)array_key_first($Proj?->eventInfo ?? [0 => []])) ?>;
+        const event_id = <?= json_encode($module->getFirstEventId()) ?>;
 
         module.ajax('compare-rounds', {
             record: record,
@@ -267,7 +267,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         if (!currentComparison) return;
         if (!confirm('Auto-merge all matching fields? This writes ' + currentComparison.matching_fields + ' field(s) to the final record.')) return;
 
-        const event_id = <?= json_encode((int)array_key_first($Proj?->eventInfo ?? [0 => []])) ?>;
+        const event_id = <?= json_encode($module->getFirstEventId()) ?>;
 
         module.ajax('merge-bulk', {
             record: currentComparison.record,
@@ -334,7 +334,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
     });
 
     function doMerge(fieldName, value, sourceRound, comment) {
-        const event_id = <?= json_encode((int)array_key_first($Proj?->eventInfo ?? [0 => []])) ?>;
+        const event_id = <?= json_encode($module->getFirstEventId()) ?>;
 
         module.ajax('merge-field', {
             record: currentComparison.record,
