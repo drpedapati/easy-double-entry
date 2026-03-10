@@ -6,11 +6,8 @@ use REDCap;
 
 class EasyDoubleEntry extends AbstractExternalModule
 {
-    /** @var int Instance number for Round 1 data entry */
     const ROUND_1 = 1;
-    /** @var int Instance number for Round 2 data entry */
     const ROUND_2 = 2;
-    /** @var int Instance number for the final merged record */
     const FINAL_INSTANCE = 3;
 
     private ?array $dashboardCache = null;
@@ -117,7 +114,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             case 'get-dde-stats':
                 return $this->ajaxGetDDEStats($project_id);
             case 'get-task-list':
-                return $this->ajaxGetTaskList($project_id);
+                return $this->ajaxGetTaskList($project_id, $payload);
             default:
                 return ['error' => 'Unknown action'];
         }
@@ -392,7 +389,7 @@ class EasyDoubleEntry extends AbstractExternalModule
         // Check if current user is in a DAG
         $user = $this->framework->getUser();
         $rights = $user->getRights();
-        $dagId = $rights['group_id'] ?? null;
+        $dagId = !empty($rights['group_id']) ? $rights['group_id'] : null;
 
         // Get filter rules up front so we can combine the record ID + filter field fetch
         $filterRules = $this->getFilterRules();
@@ -434,6 +431,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             'return_format' => 'json'
         ];
         if ($filterRecord) $ddeParams['records'] = [$filterRecord];
+        if ($dagId) $ddeParams['groups'] = [$dagId];
         $ddeData = json_decode(REDCap::getData($ddeParams), true);
 
         // Build event name => event_id map for resolving numeric IDs
@@ -746,17 +744,14 @@ class EasyDoubleEntry extends AbstractExternalModule
         return $stats;
     }
 
-    private function ajaxGetTaskList(int $project_id): array
+    private function ajaxGetTaskList(int $project_id, $payload): array
     {
         return $this->getTaskList($project_id);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
 
-    /**
-     * Compare two field values for equality after trimming whitespace.
-     */
-    private function valuesMatch(string|null $v1, string|null $v2): bool
+    private function valuesMatch($v1, $v2): bool
     {
         return trim((string)$v1) === trim((string)$v2);
     }
@@ -764,7 +759,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     private function getMergeTargetInstance(): int
     {
         $setting = $this->getProjectSetting('merge-target-instance');
-        return $setting == '1' ? self::ROUND_1 : self::FINAL_INSTANCE;
+        return $setting === '1' ? self::ROUND_1 : self::FINAL_INSTANCE;
     }
 
     private function isRecordStatusDashboard(): bool

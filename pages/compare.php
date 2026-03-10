@@ -93,6 +93,14 @@ if ($urlEventId === 0) {
         </div>
     </div>
 
+    <?php if (($module->getProjectSetting('merge-target-instance') ?? '3') === '1'): ?>
+    <div class="alert alert-warning alert-dismissible mb-2" style="font-size:13px;">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        <b>Warning:</b> Merge target is set to Instance 1 &mdash; merged values will <b>overwrite Round 1 data</b>.
+        <button type="button" class="close" data-dismiss="alert">&times;</button>
+    </div>
+    <?php endif; ?>
+
     <!-- Legend + Bulk Actions -->
     <div id="ede-actions-row" style="display:none;" class="d-flex justify-content-between align-items-center mb-2">
         <div class="ede-legend">
@@ -253,9 +261,9 @@ if ($urlEventId === 0) {
                 html += '<td class="text-center text-success"><i class="fas fa-check"></i> Match</td>';
             } else {
                 html += '<td class="text-center">';
-                html += '<button class="btn btn-sm btn-outline-primary ede-merge-btn mr-1" onclick="edePickRound(\'' + escapeHtml(field.field_name) + '\', 1)">Keep R1</button>';
-                html += '<button class="btn btn-sm btn-outline-success ede-merge-btn mr-1" onclick="edePickRound(\'' + escapeHtml(field.field_name) + '\', 2)">Keep R2</button>';
-                html += '<button class="btn btn-sm btn-outline-secondary" onclick="edeEditValue(\'' + escapeHtml(field.field_name) + '\')"><i class="fas fa-pen"></i></button>';
+                html += '<button class="btn btn-sm btn-outline-primary ede-merge-btn ede-pick-round mr-1" data-field="' + escapeHtml(field.field_name) + '" data-round="1">Keep R1</button>';
+                html += '<button class="btn btn-sm btn-outline-success ede-merge-btn ede-pick-round mr-1" data-field="' + escapeHtml(field.field_name) + '" data-round="2">Keep R2</button>';
+                html += '<button class="btn btn-sm btn-outline-secondary ede-edit-value" data-field="' + escapeHtml(field.field_name) + '"><i class="fas fa-pen"></i></button>';
                 html += '</td>';
             }
 
@@ -294,7 +302,7 @@ if ($urlEventId === 0) {
     });
 
     // Pick round value for a field
-    window.edePickRound = function(fieldName, roundNum) {
+    function edePickRound(fieldName, roundNum) {
         const field = currentComparison.fields.find(f => f.field_name === fieldName);
         if (!field) return;
 
@@ -310,10 +318,10 @@ if ($urlEventId === 0) {
         } else {
             doMerge(fieldName, value, roundNum, '');
         }
-    };
+    }
 
     // Manual edit for a field
-    window.edeEditValue = function(fieldName) {
+    function edeEditValue(fieldName) {
         const field = currentComparison.fields.find(f => f.field_name === fieldName);
         if (!field) return;
 
@@ -324,7 +332,7 @@ if ($urlEventId === 0) {
         document.getElementById('ede-merge-custom-value').value = '';
         document.getElementById('ede-merge-custom-value').placeholder = 'Enter the final value';
         $('#ede-comment-modal').modal('show');
-    };
+    }
 
     // Confirm merge from modal
     document.getElementById('ede-confirm-merge').addEventListener('click', function() {
@@ -346,11 +354,6 @@ if ($urlEventId === 0) {
     });
 
     function doMerge(fieldName, value, sourceRound, comment) {
-        // Disable buttons for this field during merge
-        const row = document.querySelector('tr[data-field="' + fieldName + '"]');
-        const buttons = row ? row.querySelectorAll('button') : [];
-        buttons.forEach(b => { b.disabled = true; });
-
         module.ajax('merge-field', {
             record: currentComparison.record,
             instrument: currentComparison.instrument,
@@ -362,19 +365,31 @@ if ($urlEventId === 0) {
         }).then(function(result) {
             if (result.success) {
                 // Mark row as merged
+                const row = document.querySelector('tr[data-field="' + fieldName + '"]');
                 if (row) {
                     row.className = 'ede-merged';
                     row.querySelector('td:last-child').innerHTML = '<i class="fas fa-check-circle text-info"></i> Merged';
                 }
             } else {
-                buttons.forEach(b => { b.disabled = false; });
                 alert('Merge failed: ' + (result.error || 'unknown error'));
             }
         }).catch(function(err) {
-            buttons.forEach(b => { b.disabled = false; });
             alert('Error: ' + (err.message || err));
         });
     }
+
+    // Event delegation for dynamically rendered buttons
+    document.getElementById('ede-compare-results').addEventListener('click', function(e) {
+        const pickBtn = e.target.closest('.ede-pick-round');
+        if (pickBtn) {
+            edePickRound(pickBtn.dataset.field, parseInt(pickBtn.dataset.round));
+            return;
+        }
+        const editBtn = e.target.closest('.ede-edit-value');
+        if (editBtn) {
+            edeEditValue(editBtn.dataset.field);
+        }
+    });
 
     function escapeHtml(str) {
         const div = document.createElement('div');
