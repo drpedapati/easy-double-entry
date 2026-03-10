@@ -169,7 +169,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
                 html += '<span class="ede-instrument-tag" style="background:' + color + '20; color:' + color + '; border:1px solid ' + color + ';"';
                 html += ' title="' + escapeHtml(tooltip) + '"';
                 if (isClickable) {
-                    html += ' onclick="window.location.href=\'' + compareUrl + '&record=' + encodeURIComponent(row.record) + '&instrument=' + encodeURIComponent(inst.instrument) + '\'"';
+                    html += ' onclick="window.location.href=\'' + compareUrl + '&record=' + encodeURIComponent(row.record) + '&instrument=' + encodeURIComponent(inst.instrument) + '&event_id=' + encodeURIComponent(inst.event_id || '') + '\'"';
                     html += ' style="background:' + color + '20; color:' + color + '; border:1px solid ' + color + '; cursor:pointer; font-weight:bold;"';
                 }
                 html += '>';

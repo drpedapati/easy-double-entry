@@ -6,8 +6,11 @@ use REDCap;
 
 class EasyDoubleEntry extends AbstractExternalModule
 {
+    /** @var int Instance number for Round 1 data entry */
     const ROUND_1 = 1;
+    /** @var int Instance number for Round 2 data entry */
     const ROUND_2 = 2;
+    /** @var int Instance number for the final merged record */
     const FINAL_INSTANCE = 3;
 
     private ?array $dashboardCache = null;
@@ -90,13 +93,18 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     function redcap_module_ajax($action, $payload, $project_id, $record, $instrument, $event_id, $repeat_instance, $survey_hash, $response_id, $survey_queue_hash, $page, $page_full, $user_id, $group_id)
     {
-        // Write actions require data entry rights
+        // Write actions require per-instrument edit rights
         $writeActions = ['merge-field', 'merge-bulk'];
         if (in_array($action, $writeActions)) {
             $user = $this->framework->getUser();
             $rights = $user->getRights();
-            if (!$rights || $rights['data_entry'] === null) {
-                return ['error' => 'You do not have data entry rights in this project'];
+            $payloadInstrument = $payload['instrument'] ?? '';
+            if (!$rights) {
+                return ['error' => 'You do not have rights in this project'];
+            }
+            $formRights = $rights['forms'][$payloadInstrument] ?? '0';
+            if (!in_array($formRights, ['1', '3'])) {
+                return ['error' => 'You do not have edit rights on this instrument'];
             }
         }
 
@@ -114,7 +122,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             case 'get-dde-stats':
                 return $this->ajaxGetDDEStats($project_id);
             case 'get-task-list':
-                return $this->ajaxGetTaskList($project_id, $payload);
+                return $this->ajaxGetTaskList($project_id);
             default:
                 return ['error' => 'Unknown action'];
         }
@@ -284,6 +292,12 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function mergeField(int $project_id, string $record, string $instrument, int $event_id, string $fieldName, string $value, int $sourceRound, string $comment = ''): bool
     {
+        // Validate that field_name belongs to the target instrument
+        $dd = REDCap::getDataDictionary($project_id, 'array', false, null, [$instrument]);
+        if (!array_key_exists($fieldName, $dd)) {
+            return false;
+        }
+
         $targetInstance = $this->getMergeTargetInstance();
         $recordIdField = REDCap::getRecordIdField();
 
@@ -389,7 +403,7 @@ class EasyDoubleEntry extends AbstractExternalModule
         // Check if current user is in a DAG
         $user = $this->framework->getUser();
         $rights = $user->getRights();
-        $dagId = !empty($rights['group_id']) ? $rights['group_id'] : null;
+        $dagId = $rights['group_id'] ?? null;
 
         // Get filter rules up front so we can combine the record ID + filter field fetch
         $filterRules = $this->getFilterRules();
@@ -431,7 +445,6 @@ class EasyDoubleEntry extends AbstractExternalModule
             'return_format' => 'json'
         ];
         if ($filterRecord) $ddeParams['records'] = [$filterRecord];
-        if ($dagId) $ddeParams['groups'] = [$dagId];
         $ddeData = json_decode(REDCap::getData($ddeParams), true);
 
         // Build event name => event_id map for resolving numeric IDs
@@ -744,14 +757,17 @@ class EasyDoubleEntry extends AbstractExternalModule
         return $stats;
     }
 
-    private function ajaxGetTaskList(int $project_id, $payload): array
+    private function ajaxGetTaskList(int $project_id): array
     {
         return $this->getTaskList($project_id);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
 
-    private function valuesMatch($v1, $v2): bool
+    /**
+     * Compare two field values for equality after trimming whitespace.
+     */
+    private function valuesMatch(string|null $v1, string|null $v2): bool
     {
         return trim((string)$v1) === trim((string)$v2);
     }
@@ -759,7 +775,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     private function getMergeTargetInstance(): int
     {
         $setting = $this->getProjectSetting('merge-target-instance');
-        return $setting === '1' ? self::ROUND_1 : self::FINAL_INSTANCE;
+        return $setting == '1' ? self::ROUND_1 : self::FINAL_INSTANCE;
     }
 
     private function isRecordStatusDashboard(): bool
