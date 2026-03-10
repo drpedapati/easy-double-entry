@@ -1,16 +1,29 @@
 # Easy Double Entry for REDCap
 
-A REDCap External Module that replaces the built-in double data entry system with a simpler, more flexible approach using repeating instances.
+A REDCap External Module that provides double data entry verification without the complexity of REDCap's built-in DDE system. No duplicate records, no `--1`/`--2` suffixes, no special user roles.
 
 ![DDE Dashboard](docs/images/tut-01-dashboard.png)
 
-## Why This Exists
+## Quick Start
 
-REDCap's built-in Double Data Entry uses record ID suffixes (`--1`, `--2`), requires rigid user role assignments, and needs constant admin permission changes for rotating staff. This module replaces all of that with repeating instances — no special permissions, no record-ID tricks.
+1. Download or clone this repo into your REDCap modules directory (e.g., `modules/easy_double_entry_v1.0/`)
+2. In REDCap **Control Center > External Modules**, enable the module
+3. Go to your project > **External Modules** > enable Easy Double Entry
+4. In module settings, select which instruments need double data entry
+5. In **Project Setup > Repeating Instruments**, enable repeating for those same instruments
+6. You're ready — open the **DDE Dashboard** from the sidebar
+
+> **Only the instruments you select become repeating.** All other instruments (demographics, scheduling, consent, etc.) remain normal single-entry forms and are completely unaffected.
 
 ## How It Works
 
-Each DDE-enabled instrument uses three repeating instances per record:
+### The Problem with Built-in DDE
+
+REDCap's native double data entry creates two copies of every record (`101--1`, `101--2`), requires assigning specific users to specific copies, and needs admin intervention whenever staff rotate. If your project has automation triggered by initial data entry (scheduling forms, branching logic), the second entry person re-triggers all of it.
+
+### This Module's Approach
+
+Easy Double Entry works within a single record using repeating instances on only the instruments you choose:
 
 | Instance | Purpose |
 |----------|---------|
@@ -18,7 +31,48 @@ Each DDE-enabled instrument uses three repeating instances per record:
 | **Instance 2** | Round 2 — independent second pass |
 | **Instance 3** | Final merged record (verified data) |
 
-Any authorized user can open a record and enter data for the appropriate round. When both rounds are complete, a reviewer compares them field-by-field and merges to produce the final verified record.
+**Key point:** A record can have a mix of regular instruments (entered once) and DDE instruments (entered via instances). Your scheduling form, demographics, consent — anything not selected for DDE — works exactly as before.
+
+### Typical Workflow
+
+1. **Staff A** opens Record 101 > "Cognitive Exam" > Instance 1 > enters data
+2. **Staff B** opens Record 101 > "Cognitive Exam" > Instance 2 > enters data independently
+3. **Reviewer** opens the DDE Comparison page > compares field-by-field > resolves discrepancies > merges to Instance 3
+4. Instance 3 now contains the verified, final data
+
+Meanwhile, Record 101's scheduling form, demographics, and any other non-DDE instruments were entered once, normally, with no repeating instances involved.
+
+## Data Export & Analysis
+
+Since DDE instruments use repeating instances, your data exports will include `redcap_repeat_instrument` and `redcap_repeat_instance` columns for those instruments. Here's how to get clean data:
+
+### Getting Only Final (Verified) Data
+
+**REDCap Reports:** Add a filter where `[redcap_repeat_instance] = 3` to show only merged/verified rows.
+
+**API Exports (R, Python, etc.):**
+```r
+# R
+clean <- data %>% filter(redcap_repeat_instance == 3 | is.na(redcap_repeat_instance))
+```
+```python
+# Python
+clean = df[(df['redcap_repeat_instance'] == 3) | (df['redcap_repeat_instance'].isna())]
+```
+
+The `is.na()` / `isna()` clause keeps rows from non-repeating instruments (which have no instance number).
+
+### What Each Instance Means
+
+| Instance | What it contains | Keep for analysis? |
+|----------|-----------------|-------------------|
+| 1 | Round 1 raw entry | No (audit trail only) |
+| 2 | Round 2 raw entry | No (audit trail only) |
+| 3 | Final merged/verified data | **Yes** |
+
+### Non-DDE Instruments
+
+Instruments not selected for DDE have no `redcap_repeat_instance` value — they export exactly as they always have. No filtering needed.
 
 ## Module Pages
 
@@ -58,44 +112,38 @@ After merge, Instance 3 contains the verified data alongside the two original en
 
 ![Merged Record](docs/images/tut-09-record-merged.png)
 
-## Setup
-
-1. Install the module via **External Modules** in REDCap Control Center
-2. Enable it on your project
-3. In module settings, select which instruments require double entry
-4. Configure those instruments as **repeating instruments** in Project Setup
-5. Optionally configure filter rules for dashboard visibility
-6. Choose merge target: overwrite Round 1, or write to a new Instance 3 (Final)
-
 ## Settings
 
 | Setting | Description |
 |---------|-------------|
 | **DDE Instruments** | Which forms require double entry (select from form list, repeatable) |
 | **Filter Rules** | Field/value pairs that control instrument visibility per participant |
-| **Merge Target** | Write merged values to Instance 1 or Instance 3 |
+| **Merge Target** | Write merged values to Instance 1 or Instance 3 (default: Instance 3) |
 | **Require Comment** | Force a comment when resolving discrepancies (audit trail) |
 | **Notification Email** | Get notified when both rounds are complete |
-
-## AJAX Actions
-
-The module uses REDCap's framework AJAX system (JSMO) for all data operations:
-
-| Action | Description |
-|--------|-------------|
-| `get-dashboard-data` | Fetch per-record DDE status for all instruments |
-| `get-dde-stats` | Summary statistics (total, pending, merged counts) |
-| `get-task-list` | Prioritized task queue |
-| `compare-rounds` | Field-by-field comparison of Round 1 vs Round 2 |
-| `merge-field` | Merge a single field into the final instance |
-| `merge-bulk` | Auto-merge all matching fields at once |
-| `get-record-rounds` | Check which rounds exist for a record/instrument |
 
 ## Compatibility
 
 - REDCap 13.0+, PHP 8.0+, Framework Version 14
 - Works with: classic projects, longitudinal, repeating instruments, DAGs, surveys
 - Upgrade-safe: no core modifications, pure External Module
+
+## FAQ
+
+**Q: Will this mess up my existing data exports?**
+A: Only DDE-enabled instruments get repeating instances. Filter to Instance 3 for clean verified data. All other instruments export exactly as before.
+
+**Q: Does the second data entry person need to fill out our scheduling/intake forms again?**
+A: No. Only the instruments you select for DDE use repeating instances. Scheduling, demographics, consent, and any other forms are entered once, normally.
+
+**Q: Can I use this on a longitudinal project?**
+A: Yes. The module tracks event IDs and works across multiple arms/events.
+
+**Q: What permissions do users need?**
+A: Standard REDCap data entry rights on the instrument. No special DDE roles or user assignments required.
+
+**Q: What happens if I disable the module later?**
+A: Your data remains in REDCap as repeating instances. Instance 3 still holds the verified data. You just lose the dashboard, task list, and comparison UI.
 
 ## File Structure
 
@@ -104,6 +152,7 @@ easy_double_entry_v1.0/
 ├── EasyDoubleEntry.php      # Core module class (AJAX router, comparison, merge logic)
 ├── config.json              # Module configuration and settings schema
 ├── README.md
+├── LICENSE                  # MIT
 ├── pages/
 │   ├── dashboard.php        # DDE Dashboard page
 │   ├── tasklist.php         # Task List page
@@ -115,20 +164,13 @@ easy_double_entry_v1.0/
 
 ## Tutorial
 
-A complete visual walkthrough is available at [docs/tutorial.html](docs/tutorial.html) covering the full workflow end-to-end:
-
-1. Dashboard overview with status cards
-2. Task list with prioritized actions
-3. Navigating to Compare & Merge
-4. Side-by-side comparison with match/discrepancy stats
-5. Filtering to discrepancies only
-6. Auto-merging matching fields
-7. Manually resolving a discrepancy
-8. All fields resolved
-9. Merged record in REDCap (3 instances)
-10. Final dashboard with Merged status
+A complete visual walkthrough is available at [docs/tutorial.html](docs/tutorial.html) covering the full workflow from dashboard to merged record.
 
 **Hosted version:** [https://report.cincibrainlab.com/ede-tutorial/](https://report.cincibrainlab.com/ede-tutorial/)
+
+## License
+
+MIT — see [LICENSE](LICENSE)
 
 ## Author
 
