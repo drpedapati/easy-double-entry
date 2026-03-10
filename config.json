@@ -1,0 +1,116 @@
+{
+    "name": "Easy Double Entry",
+    "namespace": "CCHMC\\EasyDoubleEntry",
+    "framework-version": 14,
+    "description": "Simple, upgrade-safe double data entry using repeat instances. Any authorized user selects Round 1 or Round 2 — no special permissions or record-ID tricks. Smart dashboard filtering, side-by-side comparison with one-click merge.",
+    "documentation": "README.md",
+    "authors": [
+        {
+            "name": "Ernest Pedapati",
+            "email": "ernest.pedapati@cchmc.org",
+            "institution": "Cincinnati Children's Hospital Medical Center"
+        }
+    ],
+    "enable-every-page-hooks-on-system-pages": false,
+    "enable-ajax-logging": true,
+    "auth-ajax-actions": [
+        "get-record-rounds",
+        "compare-rounds",
+        "merge-field",
+        "merge-bulk",
+        "get-dashboard-data",
+        "get-dde-stats",
+        "get-task-list"
+    ],
+    "links": {
+        "project": [
+            {
+                "name": "DDE Dashboard",
+                "icon": "fas fa-columns",
+                "url": "pages/dashboard.php",
+                "show-header-and-footer": true
+            },
+            {
+                "name": "DDE Comparison & Merge",
+                "icon": "fas fa-not-equal",
+                "url": "pages/compare.php",
+                "show-header-and-footer": true
+            },
+            {
+                "name": "DDE Task List",
+                "icon": "fas fa-tasks",
+                "url": "pages/tasklist.php",
+                "show-header-and-footer": true
+            }
+        ]
+    },
+    "compatibility": {
+        "redcap-version-min": "13.0.0",
+        "php-version-min": "8.0"
+    },
+    "project-settings": [
+        {
+            "key": "dde-instruments-header",
+            "name": "<b>DDE-Enabled Instruments</b><br>Select which instruments require double data entry. These will be configured as repeating instruments with exactly 2 instances (Round 1 and Round 2).",
+            "type": "descriptive"
+        },
+        {
+            "key": "dde-instruments",
+            "name": "Instrument for Double Entry",
+            "type": "form-list",
+            "repeatable": true
+        },
+        {
+            "key": "filtering-header",
+            "name": "<b>Dashboard Filtering</b><br>Configure which fields control instrument visibility per participant (e.g., age group, cohort, enrollment status).",
+            "type": "descriptive"
+        },
+        {
+            "key": "filter-rules",
+            "name": "Filter Rule",
+            "type": "sub_settings",
+            "repeatable": true,
+            "sub_settings": [
+                {
+                    "key": "filter-field",
+                    "name": "Field to filter on (variable name)",
+                    "type": "field-list"
+                },
+                {
+                    "key": "filter-value",
+                    "name": "Value (when this field equals this value...)",
+                    "type": "text"
+                },
+                {
+                    "key": "filter-instruments",
+                    "name": "...show these DDE instruments (comma-separated form names, or 'all')",
+                    "type": "textarea"
+                }
+            ]
+        },
+        {
+            "key": "merge-header",
+            "name": "<b>Merge & Comparison Settings</b>",
+            "type": "descriptive"
+        },
+        {
+            "key": "merge-target-instance",
+            "name": "Write merged values to",
+            "type": "dropdown",
+            "choices": [
+                { "name": "Instance 1 (overwrite Round 1)", "value": "1" },
+                { "name": "Instance 3 (new 'Final' instance)", "value": "3" }
+            ]
+        },
+        {
+            "key": "require-merge-comment",
+            "name": "Require comment when resolving discrepancies",
+            "type": "checkbox"
+        },
+        {
+            "key": "notification-email",
+            "name": "Email for notifications when both rounds are complete (optional)",
+            "type": "text"
+        }
+    ]
+}

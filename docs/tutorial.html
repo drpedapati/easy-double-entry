@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Easy Double Entry for REDCap — Walkthrough Tutorial</title>
+<style>
+  :root {
+    --red: #c83737;
+    --blue: #2b5797;
+    --green: #2d8659;
+    --gray: #6c757d;
+    --light: #f8f9fa;
+    --border: #dee2e6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.7;
+    color: #333;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+    background: #fff;
+  }
+  h1 {
+    font-size: 2.2rem;
+    color: var(--red);
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+  }
+  .subtitle {
+    font-size: 1.1rem;
+    color: var(--gray);
+    margin-bottom: 40px;
+  }
+  .toc {
+    background: var(--light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px 32px;
+    margin-bottom: 48px;
+  }
+  .toc h2 {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--gray);
+    margin-bottom: 12px;
+  }
+  .toc ol {
+    padding-left: 20px;
+  }
+  .toc li {
+    margin-bottom: 6px;
+  }
+  .toc a {
+    color: var(--blue);
+    text-decoration: none;
+  }
+  .toc a:hover {
+    text-decoration: underline;
+  }
+  .step {
+    margin-bottom: 56px;
+    scroll-margin-top: 24px;
+  }
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--red);
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+  .step h2 {
+    font-size: 1.5rem;
+    color: #222;
+  }
+  .step p {
+    margin-bottom: 16px;
+    font-size: 1.05rem;
+  }
+  .step img {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 20px 0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  }
+  .callout {
+    background: #fff8e1;
+    border-left: 4px solid #ffc107;
+    padding: 14px 18px;
+    border-radius: 0 6px 6px 0;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .callout-info {
+    background: #e3f2fd;
+    border-left-color: var(--blue);
+  }
+  .callout-success {
+    background: #e8f5e9;
+    border-left-color: var(--green);
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #fff;
+  }
+  .badge-match { background: var(--green); }
+  .badge-discrepancy { background: var(--red); }
+  .badge-merged { background: var(--blue); }
+  .key-concept {
+    display: flex;
+    gap: 12px;
+    background: var(--light);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 20px 0;
+  }
+  .key-concept .icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
+  .key-concept .text {
+    font-size: 0.95rem;
+  }
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+  footer {
+    text-align: center;
+    color: var(--gray);
+    font-size: 0.85rem;
+    margin-top: 48px;
+  }
+  code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+
+<h1>Easy Double Entry for REDCap</h1>
+<p class="subtitle">A visual walkthrough of the complete double data entry workflow &mdash; from data entry to comparison to merge.</p>
+
+<div class="key-concept">
+  <div class="icon">&#128203;</div>
+  <div class="text">
+    <strong>What is Double Data Entry?</strong><br>
+    Double data entry (DDE) is a data quality technique where two independent operators enter the same source data separately. The entries are then compared field-by-field, discrepancies are flagged, and a reviewer resolves them to produce a single verified record. This module brings that workflow directly into REDCap using repeating instances: <strong>Instance 1</strong> = Round 1, <strong>Instance 2</strong> = Round 2, <strong>Instance 3</strong> = Final merged record.
+  </div>
+</div>
+
+<div class="toc">
+  <h2>In This Tutorial</h2>
+  <ol>
+    <li><a href="#step1">The DDE Dashboard &mdash; See all records at a glance</a></li>
+    <li><a href="#step2">The Task List &mdash; Know what needs your attention</a></li>
+    <li><a href="#step3">Navigate to Compare &amp; Merge</a></li>
+    <li><a href="#step4">Side-by-Side Comparison &mdash; Matches and discrepancies</a></li>
+    <li><a href="#step5">Filter to Discrepancies Only</a></li>
+    <li><a href="#step6">Auto-Merge Matching Fields</a></li>
+    <li><a href="#step7">Resolve a Discrepancy Manually</a></li>
+    <li><a href="#step8">All Fields Resolved</a></li>
+    <li><a href="#step9">The Merged Record in REDCap</a></li>
+    <li><a href="#step10">Final Dashboard &mdash; Merged status confirmed</a></li>
+  </ol>
+</div>
+
+<!-- ───────────── STEP 1 ───────────── -->
+<div class="step" id="step1">
+  <div class="step-header">
+    <div class="step-number">1</div>
+    <h2>The DDE Dashboard</h2>
+  </div>
+  <p>
+    The Dashboard is your starting point. It shows every record in the project with color-coded instrument badges and an overall status.
+  </p>
+  <img src="images/tut-01-dashboard.png" alt="DDE Dashboard showing 5 records with status indicators">
+  <p>
+    At the top, summary cards show the total counts: <strong>5 Records</strong>, <strong>4 Pending</strong>, <strong>1 Partial</strong>, <strong>3 Ready to Compare</strong>, and <strong>1 Merged</strong>. Each record row shows which instruments have data (green badges = both rounds entered) and the overall DDE status.
+  </p>
+  <p>
+    Notice <strong>SUBJ-001</strong> &mdash; both Demographics and Vitals badges are green, and the status says <span style="color:var(--red);font-weight:600;">Ready to Compare</span>. This record has both Round 1 and Round 2 data entered and is waiting for comparison.
+  </p>
+</div>
+
+<!-- ───────────── STEP 2 ───────────── -->
+<div class="step" id="step2">
+  <div class="step-header">
+    <div class="step-number">2</div>
+    <h2>The Task List</h2>
+  </div>
+  <p>
+    The Task List shows actionable items sorted by priority. Tasks that need comparison appear at the top, followed by instruments still waiting for data entry.
+  </p>
+  <img src="images/tut-02-tasklist.png" alt="DDE Task List showing prioritized tasks">
+  <p>
+    The top items (gold badges) are <strong>Compare &amp; Merge</strong> tasks &mdash; these records have both rounds entered and are ready for a reviewer to compare. Below them are <strong>Enter Round</strong> tasks for records that still need a first or second entry.
+  </p>
+  <p>
+    Click <strong>Compare &amp; Merge</strong> next to <em>SUBJ-001 &mdash; Vitals</em> to start the comparison.
+  </p>
+</div>
+
+<!-- ───────────── STEP 3 ───────────── -->
+<div class="step" id="step3">
+  <div class="step-header">
+    <div class="step-number">3</div>
+    <h2>Navigate to Compare &amp; Merge</h2>
+  </div>
+  <p>
+    The Comparison page starts with a simple form: enter the <strong>Record ID</strong> and select the <strong>Instrument</strong> you want to compare. Click the blue <strong>Compare</strong> button to load the side-by-side view.
+  </p>
+  <img src="images/tut-03-compare-form.png" alt="Compare form with SUBJ-001 and Vitals selected">
+  <div class="callout callout-info">
+    <strong>Tip:</strong> When you arrive from the Task List, the Record and Instrument are pre-filled automatically.
+  </div>
+</div>
+
+<!-- ───────────── STEP 4 ───────────── -->
+<div class="step" id="step4">
+  <div class="step-header">
+    <div class="step-number">4</div>
+    <h2>Side-by-Side Comparison</h2>
+  </div>
+  <p>
+    After clicking Compare, you see every field from the instrument displayed with its Round 1 and Round 2 values side by side. At the top, summary statistics show the comparison at a glance.
+  </p>
+  <img src="images/tut-04b-comparison-full.png" alt="Full comparison view showing all 11 fields with matches and discrepancies">
+  <p>
+    For this Vitals form: <strong>11 Total Fields</strong>, <strong>6 Matching</strong>, <strong>5 Discrepancies</strong>, <strong>54.5% Agreement</strong>.
+  </p>
+  <p>
+    Fields are color-coded in the Action column:
+  </p>
+  <ul style="margin: 12px 0 12px 24px;">
+    <li><span class="badge badge-match">Match</span> &mdash; Both rounds entered the same value (e.g., Visit Date, Height, Temperature)</li>
+    <li><span class="badge badge-discrepancy">Keep R1</span> / <span class="badge badge-discrepancy">Keep R2</span> &mdash; The values differ and need manual resolution (e.g., Clinician Name: "Dr. Sarah Chen" vs. "Dr. S. Chen")</li>
+  </ul>
+  <div class="callout">
+    <strong>Real-world discrepancies shown here:</strong> Clinician name spelling, weight (72.3 vs 72.8 kg), blood pressure (128 vs 126 mmHg), heart rate (76 vs 78 bpm), and clinical notes wording. These are exactly the types of variations you see in practice.
+  </div>
+</div>
+
+<!-- ───────────── STEP 5 ───────────── -->
+<div class="step" id="step5">
+  <div class="step-header">
+    <div class="step-number">5</div>
+    <h2>Filter to Discrepancies Only</h2>
+  </div>
+  <p>
+    Click the red <strong>Show Discrepancies Only</strong> button to hide matching fields and focus on what needs your attention. Only the 5 fields with different values are displayed.
+  </p>
+  <img src="images/tut-05-discrepancies-only.png" alt="Filtered view showing only the 5 discrepant fields">
+  <p>
+    This focused view makes it easy to work through discrepancies one by one, especially on instruments with many fields where most values match.
+  </p>
+</div>
+
+<!-- ───────────── STEP 6 ───────────── -->
+<div class="step" id="step6">
+  <div class="step-header">
+    <div class="step-number">6</div>
+    <h2>Auto-Merge Matching Fields</h2>
+  </div>
+  <p>
+    Click the green <strong>Auto-Merge Matching Fields</strong> button to instantly resolve all fields where both rounds agree. This writes the agreed-upon values into <strong>Instance 3</strong> (the final merged record) without touching the discrepancies.
+  </p>
+  <img src="images/tut-06-after-automerge.png" alt="After auto-merge: matching fields show Match checkmarks, discrepancies still need resolution">
+  <div class="callout callout-success">
+    <strong>Result:</strong> "Merged 6 matching field(s). 5 discrepancies remaining." The matching fields (Visit Date, Visit Type, Height, BP Diastolic, Temperature, O2 Saturation) are now locked in. Only the 5 discrepancies need manual review.
+  </div>
+</div>
+
+<!-- ───────────── STEP 7 ───────────── -->
+<div class="step" id="step7">
+  <div class="step-header">
+    <div class="step-number">7</div>
+    <h2>Resolve a Discrepancy</h2>
+  </div>
+  <p>
+    For each discrepancy, decide which round's value is correct. Click <strong>Keep R1</strong> or <strong>Keep R2</strong> to accept that value into the merged record. Here we resolved the <em>Clinician Name</em> field by keeping Round 1's value ("Dr. Sarah Chen") &mdash; the row turns blue with a <span class="badge badge-merged">Merged</span> indicator.
+  </p>
+  <img src="images/tut-07-resolve-clinician.png" alt="Clinician Name resolved to Merged, 4 discrepancies remaining">
+  <p>
+    Each field also has an <strong>edit button</strong> (pencil icon) that lets you type a custom merged value &mdash; useful when neither round is exactly right and you need to enter a corrected value.
+  </p>
+  <div class="callout callout-info">
+    <strong>Audit trail:</strong> If the project setting "Require merge comments" is enabled, you'll be prompted to enter a justification for each resolution. All merge decisions are logged for data quality auditing.
+  </div>
+</div>
+
+<!-- ───────────── STEP 8 ───────────── -->
+<div class="step" id="step8">
+  <div class="step-header">
+    <div class="step-number">8</div>
+    <h2>All Fields Resolved</h2>
+  </div>
+  <p>
+    After resolving all 5 discrepancies, every field in the instrument shows either <span class="badge badge-match">Match</span> (auto-merged) or <span class="badge badge-merged">Merged</span> (manually resolved). The merged record is now complete.
+  </p>
+  <img src="images/tut-08-all-resolved.png" alt="All 11 fields resolved - complete merge">
+  <p>
+    The final merged values for SUBJ-001 Vitals are now stored in <strong>Instance 3</strong> of the repeating instrument, giving you a clean, verified record alongside both original entries.
+  </p>
+</div>
+
+<!-- ───────────── STEP 9 ───────────── -->
+<div class="step" id="step9">
+  <div class="step-header">
+    <div class="step-number">9</div>
+    <h2>The Merged Record in REDCap</h2>
+  </div>
+  <p>
+    Back on the REDCap Record Home Page for SUBJ-001, you can see the three vitals instances directly in the Repeating Instruments grid:
+  </p>
+  <img src="images/tut-09-record-merged.png" alt="Record home showing 3 vitals instances: Round 1, Round 2, and Merged">
+  <ul style="margin: 12px 0 12px 24px;">
+    <li><strong>Instance 1</strong> (green) &mdash; Round 1 entry, unchanged</li>
+    <li><strong>Instance 2</strong> (green) &mdash; Round 2 entry, unchanged</li>
+    <li><strong>Instance 3</strong> (green) &mdash; The final merged, verified record</li>
+  </ul>
+  <p>
+    Both original entries are preserved for audit purposes. The merged Instance 3 contains the reviewed, authoritative values.
+  </p>
+</div>
+
+<!-- ───────────── STEP 10 ───────────── -->
+<div class="step" id="step10">
+  <div class="step-header">
+    <div class="step-number">10</div>
+    <h2>Final Dashboard &mdash; Merge Complete</h2>
+  </div>
+  <p>
+    Returning to the DDE Dashboard, SUBJ-001 now shows a blue <span class="badge badge-merged">Merged</span> status. The Merged counter at the top has incremented, confirming the successful completion of the double data entry workflow for this record.
+  </p>
+  <img src="images/tut-10-final-dashboard.png" alt="Final dashboard showing SUBJ-001 with Merged status">
+  <p>
+    The remaining records (SUBJ-002 through SUBJ-005) are still in various stages &mdash; some awaiting data entry, some ready for comparison &mdash; giving you a clear picture of overall project progress.
+  </p>
+</div>
+
+<hr>
+
+<div class="key-concept">
+  <div class="icon">&#9889;</div>
+  <div class="text">
+    <strong>Summary</strong><br>
+    The Easy Double Entry module adds three linked pages to your REDCap project: a <strong>Dashboard</strong> for project-wide status, a <strong>Task List</strong> for prioritized action items, and a <strong>Compare &amp; Merge</strong> page for field-by-field review. Data flows through REDCap's built-in repeating instances &mdash; no external databases, no custom record naming schemes. Any instrument can be DDE-enabled through module settings.
+  </div>
+</div>
+
+<footer>
+  Easy Double Entry Module v1.0 &bull; CCHMC &bull; Built for REDCap 14.x+ (Framework Version 14)
+</footer>
+
+</body>
+</html>
