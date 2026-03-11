@@ -48,27 +48,40 @@ Since DDE instruments use repeating instances, your data exports will include `r
 
 ### Getting Only Final (Verified) Data
 
-**REDCap Reports:** Add a filter where `[redcap_repeat_instance] = 3` to show only merged/verified rows.
+The merge target instance depends on your module settings:
+
+| Merge Target Setting | Final data lives in | Filter to |
+|---------------------|--------------------|-----------|
+| **Instance 3** (default) | Instance 3 | `redcap_repeat_instance = 3` |
+| **Instance 1** (overwrite Round 1) | Instance 1 | `redcap_repeat_instance = 1` |
+
+Check your module settings to confirm which mode you're using, then apply the appropriate filter.
+
+**REDCap Reports:** Add a filter where `[redcap_repeat_instance]` equals your merge target instance.
 
 **API Exports (R, Python, etc.):**
 ```r
-# R
-clean <- data %>% filter(redcap_repeat_instance == 3 | is.na(redcap_repeat_instance))
+# R — default merge target (Instance 3)
+final_instance <- 3  # change to 1 if merge target = "Overwrite Round 1"
+clean <- data %>% filter(redcap_repeat_instance == final_instance | is.na(redcap_repeat_instance))
 ```
 ```python
-# Python
-clean = df[(df['redcap_repeat_instance'] == 3) | (df['redcap_repeat_instance'].isna())]
+# Python — default merge target (Instance 3)
+final_instance = 3  # change to 1 if merge target = "Overwrite Round 1"
+clean = df[(df['redcap_repeat_instance'] == final_instance) | (df['redcap_repeat_instance'].isna())]
 ```
 
 The `is.na()` / `isna()` clause keeps rows from non-repeating instruments (which have no instance number).
 
-### What Each Instance Means
+### What Each Instance Means (Default: Merge to Instance 3)
 
 | Instance | What it contains | Keep for analysis? |
 |----------|-----------------|-------------------|
 | 1 | Round 1 raw entry | No (audit trail only) |
 | 2 | Round 2 raw entry | No (audit trail only) |
 | 3 | Final merged/verified data | **Yes** |
+
+> If your merge target is set to "Overwrite Round 1", Instance 1 contains the final data and Instance 2 is the audit trail. There is no Instance 3 in that mode.
 
 ### Non-DDE Instruments
 
@@ -125,7 +138,7 @@ After merge, Instance 3 contains the verified data alongside the two original en
 ## Compatibility
 
 - REDCap 13.0+, PHP 8.0+, Framework Version 14
-- Works with: classic projects, longitudinal, repeating instruments, DAGs, surveys
+- Works with: classic projects, longitudinal, repeating instruments, DAGs
 - Upgrade-safe: no core modifications, pure External Module
 
 ## FAQ
@@ -143,7 +156,7 @@ A: Yes. The module tracks event IDs and works across multiple arms/events.
 A: Standard REDCap data entry rights on the instrument. No special DDE roles or user assignments required.
 
 **Q: What happens if I disable the module later?**
-A: Your data remains in REDCap as repeating instances. Instance 3 still holds the verified data. You just lose the dashboard, task list, and comparison UI.
+A: Your data remains in REDCap as repeating instances. Your merge target instance (Instance 3 by default, or Instance 1 if configured) still holds the verified data. You just lose the dashboard, task list, and comparison UI.
 
 ## File Structure
 
