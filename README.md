@@ -4,16 +4,26 @@ A REDCap External Module that provides double data entry verification without th
 
 ![DDE Dashboard](docs/images/tut-01-dashboard.png)
 
-## Quick Start
+## Installation
 
-1. Download or clone this repo into your REDCap modules directory (e.g., `modules/easy_double_entry_v1.0/`)
-2. In REDCap **Control Center > External Modules**, enable the module
-3. Go to your project > **External Modules** > enable Easy Double Entry
-4. In module settings, select which instruments need double data entry
-5. In **Project Setup > Repeating Instruments**, enable repeating for those same instruments
-6. You're ready — open the **DDE Dashboard** from the sidebar
+No special server permissions required — just standard REDCap admin access.
 
-> **Only the instruments you select become repeating.** All other instruments (demographics, scheduling, consent, etc.) remain normal single-entry forms and are completely unaffected.
+### Requirements
+
+- REDCap 13.0+ with PHP 8.0+
+- REDCap admin access (Control Center) to install the module
+
+### Steps
+
+1. **Download** — clone or download this repo
+2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.0/`
+3. **Enable server-wide** — go to **Control Center > External Modules** and enable Easy Double Entry
+4. **Enable on your project** — go to your project > **External Modules** > enable the module
+5. **Select DDE instruments** — in module settings, choose which instruments need double data entry
+6. **Enable repeating** — in **Project Setup > Repeating Instruments**, enable repeating for those same instruments
+7. **Done** — open the **DDE Dashboard** from the project sidebar
+
+> **Only the instruments you select become repeating.** All other instruments (demographics, scheduling, consent, etc.) remain normal single-entry forms and are completely unaffected. No automation is re-triggered, no scheduling forms need to be re-entered.
 
 ## How It Works
 
