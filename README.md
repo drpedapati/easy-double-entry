@@ -27,9 +27,17 @@ No special server permissions required — just standard REDCap admin access.
 
 ## How It Works
 
-### The Problem with Built-in DDE
+### Easy Double Entry vs. REDCap's Built-in DDE
 
-REDCap's native double data entry creates two copies of every record (`101--1`, `101--2`), requires assigning specific users to specific copies, and needs admin intervention whenever staff rotate. If your project has automation triggered by initial data entry (scheduling forms, branching logic), the second entry person re-triggers all of it.
+| | Built-in DDE | Easy Double Entry |
+|---|---|---|
+| **Record structure** | Duplicates the entire record (`101--1`, `101--2`) | Single record, repeating instances on selected instruments only |
+| **Which instruments** | All instruments are duplicated — every form must be entered twice | You choose which instruments need DDE; everything else is entered once |
+| **Scheduling/intake forms** | Second entry person must re-enter scheduling, demographics, consent — re-triggering ASIs, alerts, and automation | Non-DDE instruments are untouched; no automation is re-triggered |
+| **User assignments** | Each record copy is locked to a specific user role; admin must reassign when staff rotate | Any authorized user can enter any round — no role assignments needed |
+| **Comparison** | Built-in side-by-side comparison tool | Built-in comparison with one-click merge, bulk auto-merge, and custom value entry |
+| **Data exports** | Two separate records per participant; must merge `--1`/`--2` rows in analysis | One record per participant; filter to the merge target instance for clean data |
+| **Admin overhead** | High — role management, permission changes for staff turnover | Low — enable module, pick instruments, done |
 
 ### This Module's Approach
 
