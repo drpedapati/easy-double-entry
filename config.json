@@ -51,65 +51,77 @@
     "project-settings": [
         {
             "key": "dde-instruments-header",
-            "name": "<b>DDE-Enabled Instruments</b><br>Select which instruments require double data entry. These will be configured as repeating instruments with exactly 2 instances (Round 1 and Round 2).",
+            "name": "<b style='font-size:14px;'>Which instruments need double data entry?</b><br>Add each instrument below. Optionally list variable names to skip during comparison (e.g., clinician-only validity items that don't need DDE).",
             "type": "descriptive"
         },
         {
-            "key": "dde-instruments",
-            "name": "Instrument for Double Entry",
-            "type": "form-list",
-            "repeatable": true
+            "key": "dde-instrument-config",
+            "name": "<b>Instrument</b>",
+            "type": "sub_settings",
+            "repeatable": true,
+            "sub_settings": [
+                {
+                    "key": "dde-instrument",
+                    "name": "Instrument",
+                    "type": "form-list"
+                },
+                {
+                    "key": "dde-exclude-fields",
+                    "name": "Skip these variables during comparison <i>(comma-separated, leave blank to compare all)</i>",
+                    "type": "textarea"
+                }
+            ]
         },
         {
             "key": "filtering-header",
-            "name": "<b>Dashboard Filtering</b><br>Configure which fields control instrument visibility per participant (e.g., age group, cohort, enrollment status).",
+            "name": "<b style='font-size:14px;'>Who sees which instruments on the dashboard?</b><br>Optional. Use rules below to show different instruments for different participants based on a field value (e.g., only show ADOS for participants in the ASD cohort). Leave blank to show all instruments for everyone.",
             "type": "descriptive"
         },
         {
             "key": "filter-rules",
-            "name": "Filter Rule",
+            "name": "<b>Rule</b>",
             "type": "sub_settings",
             "repeatable": true,
             "sub_settings": [
                 {
                     "key": "filter-field",
-                    "name": "Field to filter on (variable name)",
+                    "name": "When this field",
                     "type": "field-list"
                 },
                 {
                     "key": "filter-value",
-                    "name": "Value (when this field equals this value...)",
+                    "name": "equals this value",
                     "type": "text"
                 },
                 {
                     "key": "filter-instruments",
-                    "name": "...show these DDE instruments (comma-separated form names, or 'all')",
+                    "name": "then show these instruments on the dashboard <i>(comma-separated form names, or type 'all')</i>",
                     "type": "textarea"
                 }
             ]
         },
         {
             "key": "merge-header",
-            "name": "<b>Merge & Comparison Settings</b>",
+            "name": "<b style='font-size:14px;'>Merge settings</b>",
             "type": "descriptive"
         },
         {
             "key": "merge-target-instance",
-            "name": "Write merged values to",
+            "name": "Where should merged values be saved?",
             "type": "dropdown",
             "choices": [
-                { "name": "Instance 1 (overwrite Round 1)", "value": "1" },
-                { "name": "Instance 3 (new 'Final' instance)", "value": "3" }
+                { "name": "Overwrite Round 1 (Instance 1)", "value": "1" },
+                { "name": "Save to a new Final instance (Instance 3)", "value": "3" }
             ]
         },
         {
             "key": "require-merge-comment",
-            "name": "Require comment when resolving discrepancies",
+            "name": "Require a comment when resolving discrepancies",
             "type": "checkbox"
         },
         {
             "key": "notification-email",
-            "name": "Email for notifications when both rounds are complete (optional)",
+            "name": "Send email when both rounds are complete <i>(optional, leave blank to disable)</i>",
             "type": "text"
         }
     ]

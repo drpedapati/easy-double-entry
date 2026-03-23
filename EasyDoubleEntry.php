@@ -41,6 +41,8 @@ class EasyDoubleEntry extends AbstractExternalModule
         $ddeInstruments = $this->getDDEInstruments();
         if (!in_array($instrument, $ddeInstruments)) return;
 
+        $repeat_instance = $this->normalizeRoundInstance($repeat_instance);
+
         // Show round indicator banner
         $roundLabel = $this->getRoundLabel($repeat_instance);
         $otherRound = $repeat_instance == self::ROUND_1 ? self::ROUND_2 : self::ROUND_1;
@@ -76,6 +78,8 @@ class EasyDoubleEntry extends AbstractExternalModule
         $ddeInstruments = $this->getDDEInstruments();
         if (!in_array($instrument, $ddeInstruments)) return;
 
+        $repeat_instance = $this->normalizeRoundInstance($repeat_instance);
+
         // Only trigger when Round 1 or Round 2 is saved
         if (!in_array($repeat_instance, [self::ROUND_1, self::ROUND_2])) return;
 
@@ -93,16 +97,24 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     function redcap_module_ajax($action, $payload, $project_id, $record, $instrument, $event_id, $repeat_instance, $survey_hash, $response_id, $survey_queue_hash, $page, $page_full, $user_id, $group_id)
     {
+        $instrumentActions = ['get-record-rounds', 'compare-rounds', 'merge-field', 'merge-bulk'];
+        if (in_array($action, $instrumentActions, true)) {
+            $payloadInstrument = trim((string)($payload['instrument'] ?? ''));
+            if ($payloadInstrument === '' || !$this->isConfiguredDDEInstrument($payloadInstrument)) {
+                return ['error' => 'This instrument is not configured for Easy Double Entry in this project'];
+            }
+        }
+
         // Write actions require per-instrument edit rights
         $writeActions = ['merge-field', 'merge-bulk'];
-        if (in_array($action, $writeActions)) {
-            $user = $this->framework->getUser();
-            $rights = $user->getRights();
-            $payloadInstrument = $payload['instrument'] ?? '';
+        if (in_array($action, $writeActions, true)) {
+            $payloadInstrument = trim((string)($payload['instrument'] ?? ''));
+            $rights = REDCap::getUserRights($user_id);
+            $rights = $rights[$user_id] ?? null;
             if (!$rights) {
                 return ['error' => 'You do not have rights in this project'];
             }
-            $formRights = $rights['forms'][$payloadInstrument] ?? '0';
+            $formRights = $this->getFormRightsLevel($rights, $payloadInstrument);
             if (!in_array($formRights, ['1', '3'])) {
                 return ['error' => 'You do not have edit rights on this instrument'];
             }
@@ -135,8 +147,78 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function getDDEInstruments(): array
     {
+        // New sub_settings structure (must use getSubSettings for EM framework v14)
+        $configs = $this->framework->getSubSettings('dde-instrument-config') ?? [];
+        if (!empty($configs)) {
+            $instruments = [];
+            foreach ($configs as $cfg) {
+                $inst = $cfg['dde-instrument'] ?? '';
+                if ($inst !== '') $instruments[] = $inst;
+            }
+            return $instruments;
+        }
+
+        // Backwards compatibility with old flat repeatable setting
         $instruments = $this->getProjectSetting('dde-instruments') ?? [];
         return array_filter($instruments);
+    }
+
+    /**
+     * Get the list of field variable names to exclude from DDE comparison
+     * for a specific instrument.
+     */
+    public function getExcludedFields(string $instrument): array
+    {
+        $configs = $this->framework->getSubSettings('dde-instrument-config') ?? [];
+        foreach ($configs as $cfg) {
+            if (($cfg['dde-instrument'] ?? '') === $instrument) {
+                $raw = trim($cfg['dde-exclude-fields'] ?? '');
+                if ($raw === '') return [];
+                return array_map('trim', preg_split('/[\s,]+/', $raw));
+            }
+        }
+        return [];
+    }
+
+    private function isConfiguredDDEInstrument(string $instrument): bool
+    {
+        return in_array($instrument, $this->getDDEInstruments(), true);
+    }
+
+    /**
+     * Extract per-form rights level from a user rights array.
+     *
+     * REDCap::getUserRights() returns 'forms' as an associative array,
+     * but the EM framework's $user->getRights() may return it as a
+     * comma-separated string like "form1:1,form2:3". Handle both.
+     */
+    private function getFormRightsLevel(array $rights, string $formName): string
+    {
+        $forms = $rights['forms'] ?? '';
+
+        if (is_array($forms)) {
+            return (string)($forms[$formName] ?? '0');
+        }
+
+        if (is_string($forms) && $forms !== '') {
+            foreach (explode(',', $forms) as $pair) {
+                $parts = explode(':', $pair, 2);
+                if (count($parts) === 2 && trim($parts[0]) === $formName) {
+                    return trim($parts[1]);
+                }
+            }
+        }
+
+        return '0';
+    }
+
+    private function normalizeRoundInstance($instance): int
+    {
+        if ($instance === null || $instance === '') {
+            return self::ROUND_1;
+        }
+
+        return (int)$instance;
     }
 
     /**
@@ -169,7 +251,7 @@ class EasyDoubleEntry extends AbstractExternalModule
         $hasR1 = false;
         $hasR2 = false;
         foreach ($rows as $row) {
-            $inst = $row['redcap_repeat_instance'] ?? '';
+            $inst = $this->normalizeRoundInstance($row['redcap_repeat_instance'] ?? null);
             $form = $row['redcap_repeat_instrument'] ?? '';
             if ($form === $instrument) {
                 if ($inst == self::ROUND_1) $hasR1 = true;
@@ -206,7 +288,7 @@ class EasyDoubleEntry extends AbstractExternalModule
 
         foreach ($rows as $row) {
             $inst = $row['redcap_repeat_instrument'] ?? '';
-            $instance = $row['redcap_repeat_instance'] ?? '';
+            $instance = $this->normalizeRoundInstance($row['redcap_repeat_instance'] ?? null);
             if ($inst !== $instrument) continue;
 
             if ($instance == self::ROUND_1) {
@@ -242,8 +324,9 @@ class EasyDoubleEntry extends AbstractExternalModule
         $discrepancyCount = 0;
         $totalCompared = 0;
 
-        // Skip metadata fields and form status fields
+        // Skip metadata fields, form status fields, and per-instrument excluded fields
         $skipFields = [$recordIdField, 'redcap_event_name', 'redcap_repeat_instrument', 'redcap_repeat_instance'];
+        $skipFields = array_merge($skipFields, $this->getExcludedFields($instrument));
         // Also skip *_complete fields (form completion status — not real data)
         foreach (array_keys($dd) as $fn) {
             if (str_ends_with($fn, '_complete')) {
@@ -368,7 +451,9 @@ class EasyDoubleEntry extends AbstractExternalModule
         if (!empty($saveRows)) {
             $result = REDCap::saveData($project_id, 'json', json_encode($saveRows), 'overwrite');
             if (!empty($result['errors'])) {
-                return ['merged' => 0, 'skipped' => $skipped, 'error' => implode('; ', $result['errors'])];
+                $errors = $result['errors'];
+                $errorMsg = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string)$errors;
+                return ['merged' => 0, 'skipped' => $skipped, 'error' => $errorMsg];
             }
 
             $this->log("Bulk merged matching fields", [
@@ -455,10 +540,10 @@ class EasyDoubleEntry extends AbstractExternalModule
         foreach ($ddeData as $row) {
             $rid = $row[$recordIdField];
             $inst = $row['redcap_repeat_instrument'] ?? '';
-            $instNum = $row['redcap_repeat_instance'] ?? '';
+            $instNum = $this->normalizeRoundInstance($row['redcap_repeat_instance'] ?? null);
             $eventName = $row['redcap_event_name'] ?? '';
             if ($inst !== '' && in_array($inst, $ddeInstruments)) {
-                $instanceMap[$rid][$inst][$eventName][] = (int)$instNum;
+                $instanceMap[$rid][$inst][$eventName][] = $instNum;
             }
         }
 
@@ -674,9 +759,9 @@ class EasyDoubleEntry extends AbstractExternalModule
         $rounds = [];
         foreach ($data as $row) {
             $inst = $row['redcap_repeat_instrument'] ?? '';
-            $instNum = $row['redcap_repeat_instance'] ?? '';
+            $instNum = $this->normalizeRoundInstance($row['redcap_repeat_instance'] ?? null);
             if ($inst === $instrument) {
-                $rounds[] = (int)$instNum;
+                $rounds[] = $instNum;
             }
         }
 

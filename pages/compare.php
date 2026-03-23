@@ -3,6 +3,9 @@
 
 $module->initializeJavascriptModuleObject();
 $jsModuleObj = $module->getJavascriptModuleObjectName();
+$ddeInstruments = $module->getDDEInstruments();
+$requestedInstrument = (string)($_GET['instrument'] ?? '');
+$invalidRequestedInstrument = $requestedInstrument !== '' && !in_array($requestedInstrument, $ddeInstruments, true);
 
 // Accept event_id from URL params; fall back to first event for classic projects
 $urlEventId = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
@@ -34,6 +37,15 @@ if ($urlEventId === 0) {
         <i class="fas fa-not-equal mr-2"></i>DDE Comparison & Merge
     </h4>
 
+    <?php if ($invalidRequestedInstrument): ?>
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle mr-2"></i>
+            The requested instrument
+            <code><?= htmlspecialchars($requestedInstrument) ?></code>
+            is not currently configured for Easy Double Entry in this project. Choose one of the configured instruments below.
+        </div>
+    <?php endif; ?>
+
     <!-- Record/Instrument Selector -->
     <div class="card mb-3">
         <div class="card-body">
@@ -48,7 +60,6 @@ if ($urlEventId === 0) {
                     <select id="ede-instrument" class="form-control form-control-sm" style="width: 250px;">
                         <option value="">-- Select --</option>
                         <?php
-                        $ddeInstruments = $module->getDDEInstruments();
                         global $Proj;
                         foreach ($ddeInstruments as $formName) {
                             $label = $Proj?->forms[$formName]['menu'] ?? $formName;
@@ -101,9 +112,6 @@ if ($urlEventId === 0) {
             <div class="ede-legend-item"><div class="ede-legend-swatch" style="background:#cce5ff;"></div> Merged</div>
         </div>
         <div>
-            <button id="ede-bulk-merge" class="btn btn-sm btn-success mr-2">
-                <i class="fas fa-check-double mr-1"></i>Auto-Merge Matching Fields
-            </button>
             <button id="ede-show-discrepancies-only" class="btn btn-sm btn-outline-danger">
                 <i class="fas fa-filter mr-1"></i>Show Discrepancies Only
             </button>
@@ -266,30 +274,21 @@ if ($urlEventId === 0) {
         document.getElementById('ede-compare-results').innerHTML = html;
     }
 
-    // Toggle discrepancies only
+    // Toggle discrepancies only — hide/show rows in place to preserve merged state
     document.getElementById('ede-show-discrepancies-only').addEventListener('click', function() {
         showDiscrepanciesOnly = !showDiscrepanciesOnly;
         this.classList.toggle('active');
         this.innerHTML = showDiscrepanciesOnly
             ? '<i class="fas fa-list mr-1"></i>Show All Fields'
             : '<i class="fas fa-filter mr-1"></i>Show Discrepancies Only';
-        if (currentComparison) renderComparisonTable(currentComparison);
-    });
 
-    // Bulk merge matching
-    document.getElementById('ede-bulk-merge').addEventListener('click', function() {
-        if (!currentComparison) return;
-        if (!confirm('Auto-merge all matching fields? This writes ' + currentComparison.matching_fields + ' field(s) to the final record.')) return;
-
-        module.ajax('merge-bulk', {
-            record: currentComparison.record,
-            instrument: currentComparison.instrument,
-            event_id: getEventId()
-        }).then(function(result) {
-            alert('Merged ' + result.merged + ' matching field(s). ' + result.skipped + ' discrepancies remaining.');
-            loadComparison(); // Refresh
-        }).catch(function(err) {
-            alert('Error: ' + escapeHtml(err.message || String(err)));
+        var rows = document.querySelectorAll('#ede-compare-results tbody tr');
+        rows.forEach(function(row) {
+            if (showDiscrepanciesOnly && (row.classList.contains('ede-match') || row.classList.contains('ede-merged'))) {
+                row.style.display = 'none';
+            } else {
+                row.style.display = '';
+            }
         });
     });
 
