@@ -2,7 +2,7 @@
     "name": "Easy Double Entry",
     "namespace": "CCHMC\\EasyDoubleEntry",
     "framework-version": 14,
-    "description": "Simple, upgrade-safe double data entry using repeat instances. Any authorized user selects Round 1 or Round 2 — no special permissions or record-ID tricks. Smart dashboard filtering, side-by-side comparison with one-click merge.",
+    "description": "Simple, upgrade-safe double data entry using repeat instances. Pick which instruments and fields need DDE — skip clinician-only items. Any authorized user enters Round 1 or Round 2 with no special roles. Includes dashboard, task list, and side-by-side comparison with one-click merge.",
     "documentation": "README.md",
     "authors": [
         {

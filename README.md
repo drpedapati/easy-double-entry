@@ -19,7 +19,7 @@ No special server permissions required — just standard REDCap admin access.
 2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.0/`
 3. **Enable server-wide** — go to **Control Center > External Modules** and enable Easy Double Entry
 4. **Enable on your project** — go to your project > **External Modules** > enable the module
-5. **Select DDE instruments** — in module settings, choose which instruments need double data entry
+5. **Configure instruments** — in module settings, choose which instruments need double data entry and optionally list fields to exclude from comparison
 6. **Enable repeating** — in **Project Setup > Repeating Instruments**, enable repeating for those same instruments
 7. **Done** — open the **DDE Dashboard** from the project sidebar
 
@@ -33,9 +33,10 @@ No special server permissions required — just standard REDCap admin access.
 |---|---|---|
 | **Record structure** | Duplicates the entire record (`101--1`, `101--2`) | Single record, repeating instances on selected instruments only |
 | **Which instruments** | All instruments are duplicated — every form must be entered twice | You choose which instruments need DDE; everything else is entered once |
+| **Which fields** | Every field is compared | You choose — optionally skip clinician-scored or validity fields |
 | **Scheduling/intake forms** | Second entry person must re-enter scheduling, demographics, consent — re-triggering ASIs, alerts, and automation | Non-DDE instruments are untouched; no automation is re-triggered |
 | **User assignments** | Each record copy is locked to a specific user role; admin must reassign when staff rotate | Any authorized user can enter any round — no role assignments needed |
-| **Comparison** | Built-in side-by-side comparison tool | Built-in comparison with one-click merge, bulk auto-merge, and custom value entry |
+| **Comparison** | Built-in side-by-side comparison tool | Built-in comparison with one-click merge and custom value entry |
 | **Data exports** | Two separate records per participant; must merge `--1`/`--2` rows in analysis | One record per participant; filter to the merge target instance for clean data |
 | **Admin overhead** | High — role management, permission changes for staff turnover | Low — enable module, pick instruments, done |
 
@@ -127,7 +128,7 @@ Side-by-side field comparison with match/discrepancy detection:
 
 ![Comparison View](docs/images/tut-04b-comparison-full.png)
 
-**Discrepancy filtering** — click "Show Discrepancies Only" to focus on fields that need attention:
+**Discrepancy filtering** — click "Show Discrepancies Only" to focus on fields that need attention. Toggling back to "Show All Fields" preserves any fields you've already merged:
 
 ![Discrepancies Only](docs/images/tut-05-discrepancies-only.png)
 
@@ -145,13 +146,34 @@ After merge, Instance 3 contains the verified data alongside the two original en
 
 ## Settings
 
+Configure the module from **External Modules > Manage > Configure**.
+
+### Which instruments need double data entry?
+
+Add each instrument that requires DDE. For each instrument, you can optionally list variable names to skip during comparison (e.g., clinician-only validity items that don't need double entry).
+
+| Field | Description |
+|-------|-------------|
+| **Instrument** | Select from the project's form list |
+| **Skip these variables** | Comma-separated variable names to exclude from comparison (leave blank to compare all fields) |
+
+### Who sees which instruments on the dashboard?
+
+Optional. Use filter rules to show different instruments for different participants based on a field value. Leave blank to show all instruments for everyone.
+
+| Field | Description |
+|-------|-------------|
+| **When this field** | A project variable to check (e.g., `cohort`, `age_group`) |
+| **equals this value** | The value to match (e.g., `asd`, `child`) |
+| **then show these instruments** | Comma-separated form names, or `all` |
+
+### Merge settings
+
 | Setting | Description |
 |---------|-------------|
-| **DDE Instruments** | Which forms require double entry (select from form list, repeatable) |
-| **Filter Rules** | Field/value pairs that control instrument visibility per participant |
-| **Merge Target** | Write merged values to Instance 1 or Instance 3 (default: Instance 3) |
-| **Require Comment** | Force a comment when resolving discrepancies (audit trail) |
-| **Notification Email** | Get notified when both rounds are complete |
+| **Where should merged values be saved?** | Overwrite Round 1 (Instance 1) or Save to a new Final instance (Instance 3, default) |
+| **Require a comment when resolving discrepancies** | Forces a comment on each merge for audit trail |
+| **Send email when both rounds are complete** | Email address for notification (leave blank to disable) |
 
 ## Compatibility
 
@@ -167,27 +189,33 @@ A: Only DDE-enabled instruments get repeating instances. Filter to Instance 3 fo
 **Q: Does the second data entry person need to fill out our scheduling/intake forms again?**
 A: No. Only the instruments you select for DDE use repeating instances. Scheduling, demographics, consent, and any other forms are entered once, normally.
 
+**Q: Can I skip certain fields from comparison (e.g., clinician validity questions)?**
+A: Yes. In the module configuration, each instrument has an optional "Skip these variables" field. List the variable names (comma-separated) and they will be excluded from the comparison table entirely.
+
 **Q: Can I use this on a longitudinal project?**
 A: Yes. The module tracks event IDs and works across multiple arms/events.
 
 **Q: What permissions do users need?**
-A: Standard REDCap data entry rights on the instrument. No special DDE roles or user assignments required.
+A: Standard REDCap "View & Edit" or "Edit survey responses" rights on the instrument. No special DDE roles or user assignments required. The module checks per-instrument edit rights before allowing any merge.
 
 **Q: What happens if I disable the module later?**
 A: Your data remains in REDCap as repeating instances. Your merge target instance (Instance 3 by default, or Instance 1 if configured) still holds the verified data. You just lose the dashboard, task list, and comparison UI.
+
+**Q: What happened to the "Auto-Merge Matching Fields" button?**
+A: It was removed. All merges now require field-by-field review to ensure data quality. Matching fields (green rows) need no action — only discrepancies (red rows) require resolution.
 
 ## File Structure
 
 ```
 easy_double_entry_v1.0/
-├── EasyDoubleEntry.php      # Core module class (AJAX router, comparison, merge logic)
-├── config.json              # Module configuration and settings schema
+├── EasyDoubleEntry.php      # Core module class (hooks, AJAX, comparison, merge)
+├── config.json              # Module metadata and settings schema
 ├── README.md
 ├── LICENSE                  # MIT
 ├── pages/
-│   ├── dashboard.php        # DDE Dashboard page
-│   ├── tasklist.php         # Task List page
-│   └── compare.php          # Compare & Merge page
+│   ├── dashboard.php        # DDE Dashboard — record status overview
+│   ├── tasklist.php         # Task List — prioritized action items
+│   └── compare.php          # Compare & Merge — side-by-side with one-click merge
 └── docs/
     ├── tutorial.html        # Visual walkthrough (self-contained HTML)
     └── images/              # Tutorial screenshots
