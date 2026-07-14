@@ -293,29 +293,37 @@ if ($urlEventId === 0) {
 
         const total = totalWritableDiscrepancies();
         const resolved = total - unresolvedCount;
+        const finalizedBadge = '<span class="badge badge-success" style="font-size:14px;"><i class="fas fa-check-double mr-1"></i>Finalized</span> ';
 
-        if (finalized) {
-            status.innerHTML = '<span class="badge badge-success" style="font-size:14px;"><i class="fas fa-check-double mr-1"></i>Finalized</span> ' +
-                '<span class="text-muted ml-2">This merge has been finalized. Further changes will modify a finalized entry.</span>';
-            btn.style.display = 'none';
-            return;
-        }
-        btn.style.display = '';
+        btn.innerHTML = '<i class="fas fa-check-double mr-1"></i>' + (finalized ? 'Re-finalize' : 'Finalize Merge');
 
         if (!canEditCurrent()) {
-            status.innerHTML = '<span class="text-muted"><i class="fas fa-eye mr-1"></i>Read-only — you do not have edit rights on this instrument.</span>';
+            status.innerHTML = (finalized ? finalizedBadge : '') +
+                '<span class="text-muted"><i class="fas fa-eye mr-1"></i>Read-only — you do not have edit rights on this instrument.</span>';
             btn.disabled = true;
             return;
         }
 
         if (unresolvedCount > 0) {
-            status.innerHTML = '<b>Discrepancies resolved: ' + resolved + ' of ' + total + '</b>' +
-                '<span class="text-muted ml-2">Resolve all discrepancies to enable finalization.</span>';
+            if (finalized) {
+                // Rounds were edited after finalization — stale resolutions were invalidated
+                status.innerHTML = finalizedBadge +
+                    '<span class="text-danger ml-2"><i class="fas fa-exclamation-triangle mr-1"></i>Round data changed since finalization — ' +
+                    unresolvedCount + ' discrepanc' + (unresolvedCount === 1 ? 'y needs' : 'ies need') + ' re-resolution before re-finalizing.</span>';
+            } else {
+                status.innerHTML = '<b>Discrepancies resolved: ' + resolved + ' of ' + total + '</b>' +
+                    '<span class="text-muted ml-2">Resolve all discrepancies to enable finalization.</span>';
+            }
             btn.disabled = true;
         } else {
-            status.innerHTML = '<b class="text-success"><i class="fas fa-check-circle mr-1"></i>All discrepancies resolved.</b>' +
-                '<span class="text-muted ml-2">Finalize to copy the ' + currentComparison.matching_fields +
-                ' matching field(s) into the final entry and mark it Complete.</span>';
+            if (finalized) {
+                status.innerHTML = finalizedBadge +
+                    '<span class="text-muted ml-2">Already finalized. Re-finalize only if you have changed round data or resolutions since.</span>';
+            } else {
+                status.innerHTML = '<b class="text-success"><i class="fas fa-check-circle mr-1"></i>All discrepancies resolved.</b>' +
+                    '<span class="text-muted ml-2">Finalize to copy the ' + currentComparison.matching_fields +
+                    ' matching field(s) into the final entry and mark it Complete.</span>';
+            }
             btn.disabled = false;
         }
     }

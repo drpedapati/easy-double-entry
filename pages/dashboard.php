@@ -178,11 +178,11 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
                 let style = 'background:' + color + '20; color:' + color + '; border:1px solid ' + color + ';';
                 if (isClickable) style += ' cursor:pointer; font-weight:bold;';
                 html += '<span class="ede-instrument-tag" style="' + style + '"';
-                html += ' title="' + escapeHtml(tooltip) + '"';
+                html += ' title="' + escapeAttr(tooltip) + '"';
                 if (isClickable) {
-                    html += ' data-ede-record="' + escapeHtml(row.record) + '"';
-                    html += ' data-ede-instrument="' + escapeHtml(inst.instrument) + '"';
-                    html += ' data-ede-event="' + escapeHtml(String(inst.event_id || '')) + '"';
+                    html += ' data-ede-record="' + escapeAttr(row.record) + '"';
+                    html += ' data-ede-instrument="' + escapeAttr(inst.instrument) + '"';
+                    html += ' data-ede-event="' + escapeAttr(String(inst.event_id || '')) + '"';
                 }
                 html += '>';
                 html += escapeHtml(inst.instrument_label);
@@ -225,6 +225,17 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    // For values placed inside HTML attributes — escapeHtml (textContent
+    // round-trip) does not escape quotes, which would allow attribute breakout
+    function escapeAttr(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     // Filter handlers

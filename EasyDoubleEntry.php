@@ -14,7 +14,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     const FINAL_INSTANCE = 3;
 
     private ?array $dashboardCache = null;
-    private ?array $userRightsCache = null;
+    private array $userRightsCache = [];
 
     // ─── Hooks ───────────────────────────────────────────────────────
 
@@ -135,12 +135,22 @@ class EasyDoubleEntry extends AbstractExternalModule
         }
 
         // Record-scoped actions: record must exist (prevents record creation via
-        // saveData) and must be in the user's DAG when the user is DAG-restricted
+        // saveData) and must be in the user's DAG when the user is DAG-restricted.
+        // The trimmed record is written back so handlers act on the exact record
+        // that was verified.
         if (in_array($action, $recordActions, true)) {
-            $payloadRecord = trim((string)($payload['record'] ?? ''));
-            $accessError = $this->checkRecordAccess($user_id, $project_id, $payloadRecord);
+            $payload['record'] = trim((string)($payload['record'] ?? ''));
+            $accessError = $this->checkRecordAccess($user_id, $project_id, $payload['record']);
             if ($accessError !== null) {
                 return ['error' => $accessError];
+            }
+
+            // Longitudinal projects: a resolvable event is required, otherwise
+            // reads would pool rows across events and writes could land in the
+            // wrong event
+            $payloadEventId = (int)($payload['event_id'] ?? 0);
+            if (REDCap::isLongitudinal() && !$this->isValidEventId($payloadEventId)) {
+                return ['error' => 'A valid event is required for this action'];
             }
         }
 
@@ -229,11 +239,25 @@ class EasyDoubleEntry extends AbstractExternalModule
 
     private function getUserRightsCached(string $user_id): array
     {
-        if ($this->userRightsCache === null) {
+        if (!isset($this->userRightsCache[$user_id])) {
             $rights = REDCap::getUserRights($user_id);
-            $this->userRightsCache = $rights[$user_id] ?? [];
+            $this->userRightsCache[$user_id] = $rights[$user_id] ?? [];
         }
-        return $this->userRightsCache;
+        return $this->userRightsCache[$user_id];
+    }
+
+    /**
+     * REDCap administrators may access a project without an explicit
+     * user-rights row; they must not be locked out of the module.
+     */
+    private function isSuperUser(string $user_id): bool
+    {
+        try {
+            $user = $this->framework->getUser($user_id);
+            return $user !== null && method_exists($user, 'isSuperUser') && $user->isSuperUser();
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**
@@ -241,6 +265,8 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function userCanReadInstrument(string $user_id, string $instrument): bool
     {
+        if ($user_id === '') return false;
+        if ($this->isSuperUser($user_id)) return true;
         $rights = $this->getUserRightsCached($user_id);
         if (empty($rights)) return false;
         return $this->getFormRightsLevel($rights, $instrument) !== '0';
@@ -251,6 +277,8 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function userCanEditInstrument(string $user_id, string $instrument): bool
     {
+        if ($user_id === '') return false;
+        if ($this->isSuperUser($user_id)) return true;
         $rights = $this->getUserRightsCached($user_id);
         if (empty($rights)) return false;
         return in_array($this->getFormRightsLevel($rights, $instrument), ['1', '3'], true);
@@ -271,15 +299,21 @@ class EasyDoubleEntry extends AbstractExternalModule
             'fields' => [$recordIdField],
             'return_format' => 'json'
         ];
-        $rows = json_decode(REDCap::getData($params), true);
-        if (empty($rows)) return 'Record not found';
 
-        $rights = $this->getUserRightsCached($user_id);
-        $dagId = $rights['group_id'] ?? null;
-        if ($dagId) {
-            $params['groups'] = [$dagId];
-            $rows = json_decode(REDCap::getData($params), true);
-            if (empty($rows)) return 'This record belongs to a different Data Access Group';
+        // DAG-restricted users only ever see records in their own group, so a
+        // single group-filtered fetch covers both existence and membership
+        $dagId = null;
+        if (!$this->isSuperUser($user_id)) {
+            $rights = $this->getUserRightsCached($user_id);
+            $dagId = $rights['group_id'] ?? null;
+        }
+        if ($dagId) $params['groups'] = [$dagId];
+
+        $rows = json_decode(REDCap::getData($params), true);
+        if (empty($rows)) {
+            return $dagId
+                ? 'Record not found in your Data Access Group'
+                : 'Record not found';
         }
 
         return null;
@@ -533,13 +567,20 @@ class EasyDoubleEntry extends AbstractExternalModule
 
         $status = $discrepancyCount === 0 ? 'concordant' : 'discrepant';
 
-        // Resolution state from the module audit log (survives page reloads)
-        $resolved = $this->getResolvedFields($project_id, $record, $instrument, $event_id);
-        $resolvedNames = array_keys($resolved);
-        $unresolvedCount = 0;
+        // Resolution state from the module audit log (survives page reloads).
+        // A resolution is only honored if the round values it adjudicated are
+        // still the current round values — editing Round 1 or Round 2 after a
+        // resolution invalidates it so the field must be re-adjudicated.
+        $resolvedLog = $this->getResolvedFields($project_id, $record, $instrument, $event_id);
+        $resolvedNames = [];
+        $unresolvedFields = [];
         foreach ($fields as $f) {
-            if (!$f['match'] && $f['merge_writable'] && !in_array($f['field_name'], $resolvedNames, true)) {
-                $unresolvedCount++;
+            if ($f['match'] || !$f['merge_writable']) continue;
+            $entry = $resolvedLog[$f['field_name']] ?? null;
+            if ($entry !== null && $this->resolutionStillValid($entry, $f['round1_value'], $f['round2_value'])) {
+                $resolvedNames[] = $f['field_name'];
+            } else {
+                $unresolvedFields[] = $f['field_name'];
             }
         }
 
@@ -551,9 +592,24 @@ class EasyDoubleEntry extends AbstractExternalModule
             'agreement_pct' => $totalCompared > 0 ? round((($totalCompared - $discrepancyCount) / $totalCompared) * 100, 1) : 100,
             'fields' => $fields,
             'resolved_fields' => $resolvedNames,
+            'unresolved_fields' => $unresolvedFields,
             'finalized' => $this->isFinalized($project_id, $record, $instrument, $event_id),
-            'unresolved_count' => $unresolvedCount
+            'unresolved_count' => count($unresolvedFields)
         ]);
+    }
+
+    /**
+     * A logged resolution is stale when either round's current value differs
+     * from the snapshot taken at resolution time. Legacy log entries (no
+     * snapshots) are accepted as-is.
+     */
+    private function resolutionStillValid(array $entry, string $currentR1, string $currentR2): bool
+    {
+        $snap1 = $entry['round1_snapshot'];
+        $snap2 = $entry['round2_snapshot'];
+        if ($snap1 === null && $snap2 === null) return true;
+        return (string)$snap1 === mb_substr($currentR1, 0, 200)
+            && (string)$snap2 === mb_substr($currentR2, 0, 200);
     }
 
     /**
@@ -564,7 +620,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     public function getResolvedFields(int $project_id, string $record, string $instrument, int $event_id): array
     {
         $result = $this->queryLogs(
-            "SELECT timestamp, field, source_round WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ? ORDER BY timestamp",
+            "SELECT timestamp, field, source_round, round1_snapshot, round2_snapshot WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ? ORDER BY timestamp",
             ['Merged field', $project_id, $record, $instrument, $event_id]
         );
 
@@ -575,7 +631,9 @@ class EasyDoubleEntry extends AbstractExternalModule
             // Latest resolution wins
             $resolved[$field] = [
                 'source_round' => $row['source_round'] ?? '',
-                'timestamp' => $row['timestamp'] ?? ''
+                'timestamp' => $row['timestamp'] ?? '',
+                'round1_snapshot' => $row['round1_snapshot'] ?? null,
+                'round2_snapshot' => $row['round2_snapshot'] ?? null
             ];
         }
         return $resolved;
@@ -635,12 +693,11 @@ class EasyDoubleEntry extends AbstractExternalModule
         }
 
         $targetInstance = $this->getMergeTargetInstance();
+        $saveRow = $this->buildSaveRowHeader($record, $instrument, $event_id, $targetInstance);
 
-        $saveRow = [$recordIdField => $record];
-        $eventName = $this->buildEventNameForSave($event_id);
-        if ($eventName !== null) $saveRow['redcap_event_name'] = $eventName;
-        $saveRow['redcap_repeat_instrument'] = $instrument;
-        $saveRow['redcap_repeat_instance'] = $targetInstance;
+        // Current round values are snapshotted into the resolution log entry so
+        // a later edit to either round invalidates this adjudication
+        [$round1Data, $round2Data] = $this->getRoundRows($project_id, $record, $instrument, $event_id, [$fieldName]);
 
         if (($fieldMeta['field_type'] ?? '') === 'checkbox') {
             // Checkboxes are written per-choice column, copied server-side from
@@ -648,22 +705,29 @@ class EasyDoubleEntry extends AbstractExternalModule
             if (!in_array($sourceRound, [self::ROUND_1, self::ROUND_2], true)) {
                 return ['success' => false, 'error' => 'Checkbox fields must be resolved by choosing Round 1 or Round 2'];
             }
-            [$round1Data, $round2Data] = $this->getRoundRows($project_id, $record, $instrument, $event_id, [$fieldName]);
             $sourceRow = $sourceRound === self::ROUND_1 ? $round1Data : $round2Data;
             if (empty($sourceRow)) {
                 return ['success' => false, 'error' => 'Source round has no data for this record'];
             }
-            $checked = [];
             $columns = $this->getCheckboxExportColumns($fieldName, $fieldMeta['select_choices_or_calculations'] ?? '');
+            $checked = [];
+            $r1Checked = [];
+            $r2Checked = [];
             foreach ($columns as $code => $col) {
                 $isChecked = ($sourceRow[$col] ?? '') === '1';
                 $saveRow[$col] = $isChecked ? '1' : '0';
                 if ($isChecked) $checked[] = $code;
+                if (($round1Data[$col] ?? '') === '1') $r1Checked[] = $code;
+                if (($round2Data[$col] ?? '') === '1') $r2Checked[] = $code;
             }
             $loggedValue = implode(', ', $checked);
+            $snapshot1 = implode(', ', $r1Checked);
+            $snapshot2 = implode(', ', $r2Checked);
         } else {
             $saveRow[$fieldName] = $value;
             $loggedValue = mb_substr($value, 0, 200);
+            $snapshot1 = (string)($round1Data[$fieldName] ?? '');
+            $snapshot2 = (string)($round2Data[$fieldName] ?? '');
         }
 
         $result = REDCap::saveData($project_id, 'json', json_encode([$saveRow]), 'overwrite');
@@ -682,6 +746,8 @@ class EasyDoubleEntry extends AbstractExternalModule
             'source_round' => $sourceRound,
             'target_instance' => $targetInstance,
             'value' => $loggedValue,
+            'round1_snapshot' => mb_substr($snapshot1, 0, 200),
+            'round2_snapshot' => mb_substr($snapshot2, 0, 200),
             'comment' => $comment
         ]);
 
@@ -706,32 +772,21 @@ class EasyDoubleEntry extends AbstractExternalModule
             return ['success' => false, 'error' => 'Both rounds must be complete before finalizing'];
         }
 
-        // Server-side verification — never trust client state
-        $resolved = $this->getResolvedFields($project_id, $record, $instrument, $event_id);
-        $unresolvedFields = [];
-        foreach ($comparison['fields'] as $f) {
-            if (!$f['match'] && $f['merge_writable'] && !isset($resolved[$f['field_name']])) {
-                $unresolvedFields[] = $f['field_name'];
-            }
-        }
-        if (!empty($unresolvedFields)) {
+        // Server-side verification — never trust client state. compareRounds
+        // already validated each resolution against current round values, so
+        // stale adjudications (rounds edited after resolution) count as unresolved.
+        if (!empty($comparison['unresolved_fields'])) {
             return [
                 'success' => false,
                 'error' => 'All discrepancies must be resolved before finalizing',
-                'unresolved' => $unresolvedFields
+                'unresolved' => $comparison['unresolved_fields']
             ];
         }
 
         $targetInstance = $this->getMergeTargetInstance();
         $inPlace = $targetInstance === self::ROUND_1;
         $dd = REDCap::getDataDictionary($project_id, 'array', false, null, [$instrument]);
-        $recordIdField = REDCap::getRecordIdField();
-
-        $saveRow = [$recordIdField => $record];
-        $eventName = $this->buildEventNameForSave($event_id);
-        if ($eventName !== null) $saveRow['redcap_event_name'] = $eventName;
-        $saveRow['redcap_repeat_instrument'] = $instrument;
-        $saveRow['redcap_repeat_instance'] = $targetInstance;
+        $saveRow = $this->buildSaveRowHeader($record, $instrument, $event_id, $targetInstance);
 
         $copiedMatching = 0;
         $copiedExcluded = 0;
@@ -799,6 +854,13 @@ class EasyDoubleEntry extends AbstractExternalModule
             'mode' => $inPlace ? 'in_place' : 'copy'
         ]);
 
+        // Clear the notification dedupe marker so a redo of the rounds after
+        // this finalization can trigger a fresh both-rounds-complete email
+        $this->removeLogs(
+            "message = ? AND record = ? AND instrument = ? AND event_id = ?",
+            ['DDE notification sent', $record, $instrument, $event_id]
+        );
+
         $this->dashboardCache = null;
 
         return [
@@ -830,6 +892,15 @@ class EasyDoubleEntry extends AbstractExternalModule
         $user = $this->framework->getUser();
         $rights = $user->getRights();
         $dagId = $rights['group_id'] ?? null;
+
+        // Dashboard, stats, and task list only expose instruments the current
+        // user has form-level read access to
+        $username = (string)$user->getUsername();
+        $ddeInstruments = array_values(array_filter(
+            $ddeInstruments,
+            fn($f) => $this->userCanReadInstrument($username, $f)
+        ));
+        if (empty($ddeInstruments)) return [];
 
         // Get filter rules up front so we can combine the record ID + filter field fetch
         $filterRules = $this->getFilterRules();
@@ -1234,6 +1305,16 @@ class EasyDoubleEntry extends AbstractExternalModule
     }
 
     /**
+     * Whether an event_id resolves to a real event in this project.
+     */
+    private function isValidEventId(int $event_id): bool
+    {
+        if ($event_id <= 0) return false;
+        $name = REDCap::getEventNames(true, false, $event_id);
+        return is_string($name) && $name !== '';
+    }
+
+    /**
      * Unique event name for saveData payloads, or null when the key must be
      * omitted (classic projects — getEventNames returns false there).
      */
@@ -1242,6 +1323,19 @@ class EasyDoubleEntry extends AbstractExternalModule
         if (!REDCap::isLongitudinal()) return null;
         $name = REDCap::getEventNames(true, false, $event_id);
         return (is_string($name) && $name !== '') ? $name : null;
+    }
+
+    /**
+     * Common identifying keys for a saveData row targeting the merge instance.
+     */
+    private function buildSaveRowHeader(string $record, string $instrument, int $event_id, int $targetInstance): array
+    {
+        $saveRow = [REDCap::getRecordIdField() => $record];
+        $eventName = $this->buildEventNameForSave($event_id);
+        if ($eventName !== null) $saveRow['redcap_event_name'] = $eventName;
+        $saveRow['redcap_repeat_instrument'] = $instrument;
+        $saveRow['redcap_repeat_instance'] = $targetInstance;
+        return $saveRow;
     }
 
     private function isRecordStatusDashboard(): bool

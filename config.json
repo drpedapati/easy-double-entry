@@ -12,6 +12,7 @@
         }
     ],
     "enable-every-page-hooks-on-system-pages": false,
+    "enable-ajax-logging": true,
     "auth-ajax-actions": [
         "get-record-rounds",
         "compare-rounds",
