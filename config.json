@@ -12,12 +12,11 @@
         }
     ],
     "enable-every-page-hooks-on-system-pages": false,
-    "enable-ajax-logging": true,
     "auth-ajax-actions": [
         "get-record-rounds",
         "compare-rounds",
         "merge-field",
-        "merge-bulk",
+        "finalize-merge",
         "get-dashboard-data",
         "get-dde-stats",
         "get-task-list"
@@ -112,6 +111,15 @@
             "choices": [
                 { "name": "Overwrite Round 1 (Instance 1)", "value": "1" },
                 { "name": "Save to a new Final instance (Instance 3)", "value": "3" }
+            ]
+        },
+        {
+            "key": "copy-excluded-on-finalize",
+            "name": "When finalizing a merge, what should happen to excluded (single-entry) fields?",
+            "type": "dropdown",
+            "choices": [
+                { "name": "Copy them from Round 1 so the final entry is complete (default)", "value": "copy" },
+                { "name": "Leave them blank in the final entry", "value": "skip" }
             ]
         },
         {
