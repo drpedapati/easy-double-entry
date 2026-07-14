@@ -16,7 +16,7 @@ No special server permissions required — just standard REDCap admin access.
 ### Steps
 
 1. **Download** — clone or download this repo
-2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.0/`
+2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.1.0/`
 3. **Enable server-wide** — go to **Control Center > External Modules** and enable Easy Double Entry
 4. **Enable on your project** — go to your project > **External Modules** > enable the module
 5. **Configure instruments** — in module settings, choose which instruments need double data entry and optionally list fields to exclude from comparison
@@ -219,7 +219,7 @@ A: Yes. Every field resolution and every finalization is written to the module l
 ## File Structure
 
 ```
-easy_double_entry_v1.0/
+easy_double_entry_v1.1.0/
 ├── EasyDoubleEntry.php      # Core module class (hooks, AJAX, comparison, merge)
 ├── config.json              # Module metadata and settings schema
 ├── README.md

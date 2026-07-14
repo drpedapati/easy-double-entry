@@ -1,0 +1,4 @@
+# Keep development-only files out of packaged zips (git archive)
+Makefile        export-ignore
+.gitattributes  export-ignore
+.gitignore      export-ignore
