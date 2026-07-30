@@ -16,7 +16,7 @@ No special server permissions required — just standard REDCap admin access.
 ### Steps
 
 1. **Download** — clone or download this repo
-2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.0/`
+2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.1.0/`
 3. **Enable server-wide** — go to **Control Center > External Modules** and enable Easy Double Entry
 4. **Enable on your project** — go to your project > **External Modules** > enable the module
 5. **Configure instruments** — in module settings, choose which instruments need double data entry and optionally list fields to exclude from comparison
@@ -56,8 +56,9 @@ Easy Double Entry works within a single record using repeating instances on only
 
 1. **Staff A** opens Record 101 > "Cognitive Exam" > Instance 1 > enters data
 2. **Staff B** opens Record 101 > "Cognitive Exam" > Instance 2 > enters data independently
-3. **Reviewer** opens the DDE Comparison page > compares field-by-field > resolves discrepancies > merges to Instance 3
-4. Instance 3 now contains the verified, final data
+3. **Reviewer** opens the DDE Comparison page > compares field-by-field > resolves each discrepancy (Keep R1 / Keep R2 / custom value)
+4. **Reviewer** clicks **Finalize Merge** — the module copies all matching fields (and, by default, any excluded single-entry fields from Round 1) into Instance 3 and marks it Complete
+5. Instance 3 now contains the **complete** verified record — every field, not just the adjudicated differences
 
 Meanwhile, Record 101's scheduling form, demographics, and any other non-DDE instruments were entered once, normally, with no repeating instances involved.
 
@@ -112,7 +113,9 @@ The module adds three pages to your REDCap project sidebar:
 
 ### DDE Dashboard
 
-Project-wide overview showing every record with color-coded instrument badges and overall DDE status (Pending, Partial, Ready to Compare, Merged).
+Project-wide overview showing every record with color-coded instrument badges and overall DDE status (Pending, Partial, Ready to Compare, Merge in Progress, Merged).
+
+> **Merge in Progress** means a final instance exists but the merge has not been finalized yet — some fields may still be missing from it. Click the badge to open the comparison page and finish. Records merged with versions of this module before the Finalize step existed will show as Merge in Progress until you finalize them.
 
 ![DDE Dashboard](docs/images/tut-01-dashboard.png)
 
@@ -140,7 +143,9 @@ Side-by-side field comparison with match/discrepancy detection:
 
 ![All Resolved](docs/images/tut-08-all-resolved.png)
 
-After merge, Instance 3 contains the verified data alongside the two original entries:
+**Finalize Merge** — once every discrepancy is resolved, the Finalize Merge button becomes available. Finalizing copies all matching fields (and, by default, excluded single-entry fields from Round 1) into the final instance and marks the form Complete, so the final instance is a complete record rather than just the resolved differences. Resolution progress is saved as you go — you can leave the page and come back without losing state.
+
+After finalizing, Instance 3 contains the verified data alongside the two original entries:
 
 ![Merged Record](docs/images/tut-09-record-merged.png)
 
@@ -172,6 +177,7 @@ Optional. Use filter rules to show different instruments for different participa
 | Setting | Description |
 |---------|-------------|
 | **Where should merged values be saved?** | Overwrite Round 1 (Instance 1) or Save to a new Final instance (Instance 3, default) |
+| **Excluded fields on finalize** | Copy excluded (single-entry) fields from Round 1 into the final entry (default), or leave them blank |
 | **Require a comment when resolving discrepancies** | Forces a comment on each merge for audit trail |
 | **Send email when both rounds are complete** | Email address for notification (leave blank to disable) |
 
@@ -196,18 +202,24 @@ A: Yes. In the module configuration, each instrument has an optional "Skip these
 A: Yes. The module tracks event IDs and works across multiple arms/events.
 
 **Q: What permissions do users need?**
-A: Standard REDCap "View & Edit" or "Edit survey responses" rights on the instrument. No special DDE roles or user assignments required. The module checks per-instrument edit rights before allowing any merge.
+A: Standard REDCap form rights — read access to view comparisons, "View & Edit" or "Edit survey responses" to resolve discrepancies and finalize. No special DDE roles or user assignments required. The module enforces per-instrument read and edit rights on every action, and users restricted to a Data Access Group can only view and merge records in their own DAG.
 
 **Q: What happens if I disable the module later?**
 A: Your data remains in REDCap as repeating instances. Your merge target instance (Instance 3 by default, or Instance 1 if configured) still holds the verified data. You just lose the dashboard, task list, and comparison UI.
 
-**Q: What happened to the "Auto-Merge Matching Fields" button?**
-A: It was removed. All merges now require field-by-field review to ensure data quality. Matching fields (green rows) need no action — only discrepancies (red rows) require resolution.
+**Q: How do matching fields get into the final entry?**
+A: Through the **Finalize Merge** step. Discrepancies must be resolved field-by-field for data quality; once all are resolved, Finalize Merge copies every matching field (and, by default, excluded single-entry fields from Round 1) into the final instance in one audited action and marks the form Complete. There is no silent auto-merge — finalization is always an explicit, logged decision.
+
+**Q: What about calculated fields, file uploads, and signatures?**
+A: They are shown in the comparison but never written by the merge: REDCap recalculates `calc` and `@CALCTEXT` fields itself, and file/signature contents cannot be copied between instances. The finalize summary lists any fields that were skipped for these reasons.
+
+**Q: Is there an audit trail?**
+A: Yes. Every field resolution and every finalization is written to the module log (visible to REDCap administrators), including who did it, when, which round was chosen, and any comment. Note that resolved field values (which may include PHI) appear in these module logs.
 
 ## File Structure
 
 ```
-easy_double_entry_v1.0/
+easy_double_entry_v1.1.0/
 ├── EasyDoubleEntry.php      # Core module class (hooks, AJAX, comparison, merge)
 ├── config.json              # Module metadata and settings schema
 ├── README.md

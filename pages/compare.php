@@ -3,7 +3,19 @@
 
 $module->initializeJavascriptModuleObject();
 $jsModuleObj = $module->getJavascriptModuleObjectName();
-$ddeInstruments = $module->getDDEInstruments();
+
+// Only offer instruments the current user can at least read; track edit rights
+// so the UI can hide merge controls for read-only reviewers
+$username = $module->framework->getUser()->getUsername();
+$ddeInstruments = [];
+$canEditMap = [];
+foreach ($module->getDDEInstruments() as $formName) {
+    if ($module->userCanReadInstrument($username, $formName)) {
+        $ddeInstruments[] = $formName;
+        $canEditMap[$formName] = $module->userCanEditInstrument($username, $formName);
+    }
+}
+
 $requestedInstrument = (string)($_GET['instrument'] ?? '');
 $invalidRequestedInstrument = $requestedInstrument !== '' && !in_array($requestedInstrument, $ddeInstruments, true);
 
@@ -42,7 +54,7 @@ if ($urlEventId === 0) {
             <i class="fas fa-exclamation-triangle mr-2"></i>
             The requested instrument
             <code><?= htmlspecialchars($requestedInstrument) ?></code>
-            is not currently configured for Easy Double Entry in this project. Choose one of the configured instruments below.
+            is not available — it is either not configured for Easy Double Entry or you do not have read access to it.
         </div>
     <?php endif; ?>
 
@@ -104,6 +116,16 @@ if ($urlEventId === 0) {
         </div>
     </div>
 
+    <!-- Finalize Panel -->
+    <div id="ede-finalize-panel" class="card mb-3" style="display:none;">
+        <div class="card-body d-flex justify-content-between align-items-center py-2">
+            <div id="ede-finalize-status" class="mr-3"></div>
+            <button id="ede-finalize-btn" class="btn btn-success" disabled>
+                <i class="fas fa-check-double mr-1"></i>Finalize Merge
+            </button>
+        </div>
+    </div>
+
     <!-- Legend + Bulk Actions -->
     <div id="ede-actions-row" style="display:none;" class="d-flex justify-content-between align-items-center mb-2">
         <div class="ede-legend">
@@ -142,7 +164,7 @@ if ($urlEventId === 0) {
                     <label for="ede-merge-comment"><b>Comment:</b></label>
                     <textarea id="ede-merge-comment" class="form-control" rows="3" placeholder="Reason for choosing this value..."></textarea>
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="ede-custom-value-group">
                     <label><b>Custom value (optional):</b></label>
                     <input type="text" id="ede-merge-custom-value" class="form-control form-control-sm" placeholder="Leave blank to use selected round's value">
                 </div>
@@ -161,11 +183,14 @@ if ($urlEventId === 0) {
 (function() {
     const module = <?= $jsModuleObj ?>;
     const requireComment = <?= json_encode((bool)$module->getProjectSetting('require-merge-comment')) ?>;
+    const canEditMap = <?= json_encode($canEditMap) ?>;
     // Use event_id from URL params (resolved server-side), falling back to first event
     const pageEventId = <?= json_encode($urlEventId) ?>;
     let currentComparison = null;
     let showDiscrepanciesOnly = false;
     let pendingMerge = null;
+    let unresolvedCount = 0;
+    let finalized = false;
 
     // Form submit
     document.getElementById('ede-compare-form').addEventListener('submit', function(e) {
@@ -176,6 +201,10 @@ if ($urlEventId === 0) {
     // Auto-load if URL params present
     if (document.getElementById('ede-record').value && document.getElementById('ede-instrument').value) {
         loadComparison();
+    }
+
+    function canEditCurrent() {
+        return !!(currentComparison && canEditMap[currentComparison.instrument]);
     }
 
     function getEventId() {
@@ -199,6 +228,7 @@ if ($urlEventId === 0) {
         document.getElementById('ede-compare-results').innerHTML = '';
         document.getElementById('ede-stats-row').style.display = 'none';
         document.getElementById('ede-actions-row').style.display = 'none';
+        document.getElementById('ede-finalize-panel').style.display = 'none';
 
         module.ajax('compare-rounds', {
             record: record,
@@ -206,7 +236,16 @@ if ($urlEventId === 0) {
             event_id: getEventId()
         }).then(function(result) {
             document.getElementById('ede-loading').style.display = 'none';
+
+            if (result.error) {
+                document.getElementById('ede-compare-results').innerHTML =
+                    '<div class="alert alert-danger"><i class="fas fa-ban mr-2"></i>' + escapeHtml(result.error) + '</div>';
+                return;
+            }
+
             currentComparison = result;
+            unresolvedCount = result.unresolved_count || 0;
+            finalized = !!result.finalized;
 
             if (result.status === 'no_data') {
                 document.getElementById('ede-compare-results').innerHTML =
@@ -228,6 +267,7 @@ if ($urlEventId === 0) {
             document.getElementById('ede-actions-row').style.display = '';
 
             renderComparisonTable(result);
+            updateFinalizePanel();
         }).catch(function(err) {
             document.getElementById('ede-loading').style.display = 'none';
             document.getElementById('ede-compare-results').innerHTML =
@@ -235,7 +275,63 @@ if ($urlEventId === 0) {
         });
     }
 
+    function totalWritableDiscrepancies() {
+        if (!currentComparison || !currentComparison.fields) return 0;
+        return currentComparison.fields.filter(f => !f.match && f.merge_writable).length;
+    }
+
+    function updateFinalizePanel() {
+        const panel = document.getElementById('ede-finalize-panel');
+        const status = document.getElementById('ede-finalize-status');
+        const btn = document.getElementById('ede-finalize-btn');
+
+        if (!currentComparison || !['concordant', 'discrepant'].includes(currentComparison.status)) {
+            panel.style.display = 'none';
+            return;
+        }
+        panel.style.display = '';
+
+        const total = totalWritableDiscrepancies();
+        const resolved = total - unresolvedCount;
+        const finalizedBadge = '<span class="badge badge-success" style="font-size:14px;"><i class="fas fa-check-double mr-1"></i>Finalized</span> ';
+
+        btn.innerHTML = '<i class="fas fa-check-double mr-1"></i>' + (finalized ? 'Re-finalize' : 'Finalize Merge');
+
+        if (!canEditCurrent()) {
+            status.innerHTML = (finalized ? finalizedBadge : '') +
+                '<span class="text-muted"><i class="fas fa-eye mr-1"></i>Read-only — you do not have edit rights on this instrument.</span>';
+            btn.disabled = true;
+            return;
+        }
+
+        if (unresolvedCount > 0) {
+            if (finalized) {
+                // Rounds were edited after finalization — stale resolutions were invalidated
+                status.innerHTML = finalizedBadge +
+                    '<span class="text-danger ml-2"><i class="fas fa-exclamation-triangle mr-1"></i>Round data changed since finalization — ' +
+                    unresolvedCount + ' discrepanc' + (unresolvedCount === 1 ? 'y needs' : 'ies need') + ' re-resolution before re-finalizing.</span>';
+            } else {
+                status.innerHTML = '<b>Discrepancies resolved: ' + resolved + ' of ' + total + '</b>' +
+                    '<span class="text-muted ml-2">Resolve all discrepancies to enable finalization.</span>';
+            }
+            btn.disabled = true;
+        } else {
+            if (finalized) {
+                status.innerHTML = finalizedBadge +
+                    '<span class="text-muted ml-2">Already finalized. Re-finalize only if you have changed round data or resolutions since.</span>';
+            } else {
+                status.innerHTML = '<b class="text-success"><i class="fas fa-check-circle mr-1"></i>All discrepancies resolved.</b>' +
+                    '<span class="text-muted ml-2">Finalize to copy the ' + currentComparison.matching_fields +
+                    ' matching field(s) into the final entry and mark it Complete.</span>';
+            }
+            btn.disabled = false;
+        }
+    }
+
     function renderComparisonTable(result) {
+        const resolvedSet = new Set(result.resolved_fields || []);
+        const editable = canEditCurrent();
+
         let html = '<table class="table table-sm table-bordered">';
         html += '<thead class="thead-light"><tr>';
         html += '<th style="width:25%;">Field</th>';
@@ -245,9 +341,10 @@ if ($urlEventId === 0) {
         html += '</tr></thead><tbody>';
 
         result.fields.forEach(function(field) {
-            if (showDiscrepanciesOnly && field.match) return;
+            const isResolved = resolvedSet.has(field.field_name);
+            if (showDiscrepanciesOnly && (field.match || isResolved)) return;
 
-            const rowClass = field.match ? 'ede-match' : 'ede-mismatch';
+            const rowClass = isResolved ? 'ede-merged' : (field.match ? 'ede-match' : 'ede-mismatch');
             const v1 = escapeHtml(field.round1_value || '(empty)');
             const v2 = escapeHtml(field.round2_value || '(empty)');
 
@@ -259,11 +356,19 @@ if ($urlEventId === 0) {
 
             if (field.match) {
                 html += '<td class="text-center text-success"><i class="fas fa-check"></i> Match</td>';
+            } else if (isResolved) {
+                html += '<td class="text-center"><i class="fas fa-check-circle text-info"></i> Merged</td>';
+            } else if (!field.merge_writable) {
+                html += '<td class="text-center text-muted" style="font-size:12px;"><i class="fas fa-info-circle mr-1"></i>' + escapeHtml(field.merge_skip_reason) + '</td>';
+            } else if (!editable) {
+                html += '<td class="text-center text-muted"><i class="fas fa-eye mr-1"></i>Read only</td>';
             } else {
                 html += '<td class="text-center">';
                 html += '<button class="btn btn-sm btn-outline-primary ede-merge-btn ede-pick-round mr-1" data-field="' + escapeHtml(field.field_name) + '" data-round="1">Keep R1</button>';
                 html += '<button class="btn btn-sm btn-outline-success ede-merge-btn ede-pick-round mr-1" data-field="' + escapeHtml(field.field_name) + '" data-round="2">Keep R2</button>';
-                html += '<button class="btn btn-sm btn-outline-secondary ede-edit-value" data-field="' + escapeHtml(field.field_name) + '"><i class="fas fa-pen"></i></button>';
+                if (!field.is_checkbox) {
+                    html += '<button class="btn btn-sm btn-outline-secondary ede-edit-value" data-field="' + escapeHtml(field.field_name) + '"><i class="fas fa-pen"></i></button>';
+                }
                 html += '</td>';
             }
 
@@ -313,6 +418,8 @@ if ($urlEventId === 0) {
                 '<b>' + escapeHtml(field.field_label) + '</b>: keeping Round ' + roundNum + ' value "' + escapeHtml(value) + '"';
             document.getElementById('ede-merge-comment').value = '';
             document.getElementById('ede-merge-custom-value').value = '';
+            // Custom values cannot represent checkbox selections
+            document.getElementById('ede-custom-value-group').style.display = field.is_checkbox ? 'none' : '';
             $('#ede-comment-modal').modal('show');
         } else {
             doMerge(fieldName, value, roundNum, '');
@@ -330,6 +437,7 @@ if ($urlEventId === 0) {
         document.getElementById('ede-merge-comment').value = '';
         document.getElementById('ede-merge-custom-value').value = '';
         document.getElementById('ede-merge-custom-value').placeholder = 'Enter the final value';
+        document.getElementById('ede-custom-value-group').style.display = '';
         $('#ede-comment-modal').modal('show');
     }
 
@@ -344,8 +452,9 @@ if ($urlEventId === 0) {
             return;
         }
 
-        const value = customValue || pendingMerge.value;
-        const roundNum = customValue ? 0 : pendingMerge.roundNum;
+        const allowCustom = !pendingMerge.field.is_checkbox;
+        const value = (allowCustom && customValue) ? customValue : pendingMerge.value;
+        const roundNum = (allowCustom && customValue) ? 0 : pendingMerge.roundNum;
 
         $('#ede-comment-modal').modal('hide');
         doMerge(pendingMerge.fieldName, value, roundNum, comment);
@@ -373,6 +482,13 @@ if ($urlEventId === 0) {
                     row.className = 'ede-merged';
                     row.querySelector('td:last-child').innerHTML = '<i class="fas fa-check-circle text-info"></i> Merged';
                 }
+                if (typeof result.unresolved_count === 'number') {
+                    unresolvedCount = result.unresolved_count;
+                }
+                if (currentComparison.resolved_fields && !currentComparison.resolved_fields.includes(fieldName)) {
+                    currentComparison.resolved_fields.push(fieldName);
+                }
+                updateFinalizePanel();
             } else {
                 buttons.forEach(b => { b.disabled = false; });
                 alert('Merge failed: ' + (result.error || 'unknown error'));
@@ -382,6 +498,65 @@ if ($urlEventId === 0) {
             alert('Error: ' + (err.message || err));
         });
     }
+
+    // Finalize merge
+    document.getElementById('ede-finalize-btn').addEventListener('click', function() {
+        if (!currentComparison) return;
+
+        const msg = 'Finalize this merge?\n\n' +
+            'This will:\n' +
+            '• Copy all ' + currentComparison.matching_fields + ' matching field(s) into the final entry\n' +
+            '• Copy any excluded (single-entry) fields from Round 1 (per module settings)\n' +
+            '• Mark the final entry as Complete\n\n' +
+            'The final instance will then contain the complete verified record.';
+        if (!confirm(msg)) return;
+
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Finalizing...';
+
+        module.ajax('finalize-merge', {
+            record: currentComparison.record,
+            instrument: currentComparison.instrument,
+            event_id: getEventId()
+        }).then(function(result) {
+            btn.innerHTML = '<i class="fas fa-check-double mr-1"></i>Finalize Merge';
+            if (result.success) {
+                finalized = true;
+                let note = '<div class="alert alert-success"><i class="fas fa-check-double mr-2"></i>' +
+                    '<b>Merge finalized.</b> ';
+                if (result.mode === 'in_place') {
+                    note += 'Instance 1 now holds the verified entry (merge-to-Round-1 mode) and is marked Complete.';
+                } else {
+                    note += 'Copied ' + result.copied_matching + ' matching field(s)';
+                    if (result.copied_excluded > 0) {
+                        note += ' and ' + result.copied_excluded + ' excluded field(s) from Round 1';
+                    }
+                    note += ' into the final entry, which is now marked Complete.';
+                }
+                if (result.skipped_fields && result.skipped_fields.length > 0) {
+                    note += '<br><small class="text-muted">Not copied (recalculated or non-copyable): ' +
+                        result.skipped_fields.map(s => escapeHtml(s.field)).join(', ') + '</small>';
+                }
+                note += '</div>';
+                document.getElementById('ede-compare-results').insertAdjacentHTML('afterbegin', note);
+                updateFinalizePanel();
+            } else {
+                btn.disabled = false;
+                if (result.unresolved && result.unresolved.length > 0) {
+                    alert('Cannot finalize — unresolved discrepancies remain:\n' + result.unresolved.join(', ') +
+                        '\n\nThe page will reload the comparison.');
+                    loadComparison();
+                } else {
+                    alert('Finalize failed: ' + (result.error || 'unknown error'));
+                }
+            }
+        }).catch(function(err) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-check-double mr-1"></i>Finalize Merge';
+            alert('Error: ' + (err.message || err));
+        });
+    });
 
     function escapeHtml(str) {
         const div = document.createElement('div');
