@@ -464,8 +464,12 @@ class EasyDoubleEntry extends AbstractExternalModule
             // Covers both file uploads and signature fields
             return [false, 'File/signature field — cannot be copied by merge'];
         }
-        if (str_contains($fieldMeta['field_annotation'] ?? '', '@CALCTEXT')) {
+        $annotation = $fieldMeta['field_annotation'] ?? '';
+        if (str_contains($annotation, '@CALCTEXT')) {
             return [false, 'Calculated text (@CALCTEXT) — REDCap recalculates it automatically'];
+        }
+        if (str_contains($annotation, '@CALCDATE')) {
+            return [false, 'Calculated date (@CALCDATE) — REDCap recalculates it automatically'];
         }
         return [true, ''];
     }
@@ -588,6 +592,10 @@ class EasyDoubleEntry extends AbstractExternalModule
             'status' => $status,
             'total_fields' => $totalCompared,
             'matching_fields' => $totalCompared - $discrepancyCount,
+            'matching_writable_fields' => count(array_filter(
+                $fields,
+                static fn($f) => $f['match'] && $f['merge_writable']
+            )),
             'discrepancy_count' => $discrepancyCount,
             'agreement_pct' => $totalCompared > 0 ? round((($totalCompared - $discrepancyCount) / $totalCompared) * 100, 1) : 100,
             'fields' => $fields,
@@ -724,6 +732,14 @@ class EasyDoubleEntry extends AbstractExternalModule
             $snapshot1 = implode(', ', $r1Checked);
             $snapshot2 = implode(', ', $r2Checked);
         } else {
+            // Keep R1/R2: copy from server, never trust the browser (stale tab)
+            if (in_array($sourceRound, [self::ROUND_1, self::ROUND_2], true)) {
+                $sourceRow = $sourceRound === self::ROUND_1 ? $round1Data : $round2Data;
+                if (empty($sourceRow)) {
+                    return ['success' => false, 'error' => 'Source round has no data for this record'];
+                }
+                $value = (string)($sourceRow[$fieldName] ?? '');
+            }
             $saveRow[$fieldName] = $value;
             $loggedValue = mb_substr($value, 0, 200);
             $snapshot1 = (string)($round1Data[$fieldName] ?? '');
@@ -1021,6 +1037,15 @@ class EasyDoubleEntry extends AbstractExternalModule
                             $status = 'partial';
                         } else {
                             $status = 'pending';
+                        }
+                    }
+
+                    // Post-finalize edits to R1/R2 invalidate resolutions; demote
+                    // "merged" so dashboard/tasks match Compare & Merge
+                    if ($status === 'merged' && $hasR1 && $hasR2 && $eventId > 0) {
+                        $cmp = $this->compareRounds($project_id, $rid, $instName, $eventId);
+                        if (($cmp['unresolved_count'] ?? 0) > 0) {
+                            $status = 'merge_in_progress';
                         }
                     }
 

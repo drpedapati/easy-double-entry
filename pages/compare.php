@@ -321,7 +321,7 @@ if ($urlEventId === 0) {
                     '<span class="text-muted ml-2">Already finalized. Re-finalize only if you have changed round data or resolutions since.</span>';
             } else {
                 status.innerHTML = '<b class="text-success"><i class="fas fa-check-circle mr-1"></i>All discrepancies resolved.</b>' +
-                    '<span class="text-muted ml-2">Finalize to copy the ' + currentComparison.matching_fields +
+                    '<span class="text-muted ml-2">Finalize to copy the ' + (currentComparison.matching_writable_fields ?? currentComparison.matching_fields) +
                     ' matching field(s) into the final entry and mark it Complete.</span>';
             }
             btn.disabled = false;
@@ -505,7 +505,7 @@ if ($urlEventId === 0) {
 
         const msg = 'Finalize this merge?\n\n' +
             'This will:\n' +
-            '• Copy all ' + currentComparison.matching_fields + ' matching field(s) into the final entry\n' +
+            '• Copy all ' + (currentComparison.matching_writable_fields ?? currentComparison.matching_fields) + ' matching field(s) into the final entry\n' +
             '• Copy any excluded (single-entry) fields from Round 1 (per module settings)\n' +
             '• Mark the final entry as Complete\n\n' +
             'The final instance will then contain the complete verified record.';
