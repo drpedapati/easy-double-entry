@@ -239,7 +239,7 @@ easy_double_entry_v1.1.1/
 
 ### Development
 
-`make test` runs the workflow tests in `tests/` (PHP 8+ only, no REDCap server needed). They drive the real module class through data entry, comparison, merge, finalize, and dashboard flows against an in-memory stand-in for REDCap and the External Module framework. `make package` builds the distributable zip; `tests/` is excluded from it.
+From a clone of the git repository (the packaged zip does not include them), `make test` runs the workflow tests in `tests/` (PHP 8+ only, no REDCap server needed). They drive the real module class through data entry, comparison, merge, finalize, and dashboard flows against an in-memory stand-in for REDCap and the External Module framework. `make package` builds the distributable zip; `tests/` is excluded from it.
 
 ## Tutorial
 
