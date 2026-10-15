@@ -183,6 +183,7 @@ if ($urlEventId === 0) {
 (function() {
     const module = <?= $jsModuleObj ?>;
     const requireComment = <?= json_encode((bool)$module->getProjectSetting('require-merge-comment')) ?>;
+    const mergeInPlace = <?= json_encode($module->getProjectSetting('merge-target-instance') == '1') ?>;
     const canEditMap = <?= json_encode($canEditMap) ?>;
     // Use event_id from URL params (resolved server-side), falling back to first event
     const pageEventId = <?= json_encode($urlEventId) ?>;
@@ -503,12 +504,17 @@ if ($urlEventId === 0) {
     document.getElementById('ede-finalize-btn').addEventListener('click', function() {
         if (!currentComparison) return;
 
-        const msg = 'Finalize this merge?\n\n' +
-            'This will:\n' +
-            '• Copy all ' + (currentComparison.matching_writable_fields ?? currentComparison.matching_fields) + ' matching field(s) into the final entry\n' +
-            '• Copy any excluded (single-entry) fields from Round 1 (per module settings)\n' +
-            '• Mark the final entry as Complete\n\n' +
-            'The final instance will then contain the complete verified record.';
+        const msg = mergeInPlace
+            ? 'Finalize this merge?\n\n' +
+              'Round 1 (Instance 1) already holds the adjudicated values in this project\'s merge-to-Round-1 mode.\n' +
+              'This will mark Round 1 as Complete; no field values are copied.'
+            : 'Finalize this merge?\n\n' +
+              'This will:\n' +
+              '• Write all adjudicated values into the final entry\n' +
+              '• Copy all ' + (currentComparison.matching_writable_fields ?? currentComparison.matching_fields) + ' matching field(s) into the final entry\n' +
+              '• Copy any excluded (single-entry) fields from Round 1 (per module settings)\n' +
+              '• Mark the final entry as Complete\n\n' +
+              'The final instance will then contain the complete verified record.';
         if (!confirm(msg)) return;
 
         const btn = this;

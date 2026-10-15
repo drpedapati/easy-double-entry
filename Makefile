@@ -9,7 +9,7 @@
 # REDCap expects under modules/. Built from committed content (git archive),
 # so commit before packaging.
 
-VERSION := 1.1.0
+VERSION := 1.1.1
 MODULE  := easy_double_entry
 DIST    := dist
 PKG     := $(DIST)/$(MODULE)_v$(VERSION).zip

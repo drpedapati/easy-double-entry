@@ -39,6 +39,7 @@ function fixture(array $opts = []): EasyDoubleEntry
             'total' => ['field_type' => 'calc', 'field_label' => 'Total', 'select_choices_or_calculations' => '[score]*2'],
             'clin_only' => ['field_type' => 'text', 'field_label' => 'Clinician only'],
             'scan' => ['field_type' => 'file', 'field_label' => 'Scan'],
+            'consent_complete' => ['field_type' => 'yesno', 'field_label' => 'Consent completed?'],
         ],
     ];
     foreach (Fake::$forms as $form => &$fields) {
@@ -445,6 +446,37 @@ $tests['dashboard cost does not grow per merged record'] = function () {
     check((Fake::$calls['getData'] ?? 0) <= 3, 'getData calls: ' . (Fake::$calls['getData'] ?? 0));
     check((Fake::$calls['queryLogs'] ?? 0) <= 3, 'queryLogs calls: ' . (Fake::$calls['queryLogs'] ?? 0));
     check((Fake::$calls['getDataDictionary'] ?? 0) <= 1, 'getDataDictionary calls: ' . (Fake::$calls['getDataDictionary'] ?? 0));
+};
+
+$tests['data fields named *_complete are compared, merged and finalized'] = function () {
+    $m = fixture();
+    seedDiscrepant($m);
+    enterRound($m, '101', 1, ['consent_complete' => '1']);
+    enterRound($m, '101', 2, ['consent_complete' => '0']);
+
+    $cmp = ok(ajax($m, 'compare-rounds', ['record' => '101']));
+    check(in_array('consent_complete', $cmp['unresolved_fields'], true), 'consent_complete is compared');
+    check(!in_array(FORM . '_complete', array_column($cmp['fields'], 'field_name'), true), 'form status is not compared');
+
+    ok(merge($m, '101', 'consent_complete', 1));
+    check(!empty(merge($m, '101', FORM . '_complete', 0, '2')['error']), 'form status field cannot be merged');
+    ok(merge($m, '101', 'score', 1));
+    ok(merge($m, '101', 'mood', 1));
+    ok(merge($m, '101', 'symptoms', 1));
+    ok(ajax($m, 'finalize-merge', ['record' => '101']));
+    eq('1', Fake::value('101', FORM, 3, 'consent_complete'));
+};
+
+$tests['classic project: a missing event_id is normalized to the project event'] = function () {
+    $m = fixture();
+    seedDiscrepant($m);
+    ok(merge($m, '101', 'score', 1, '', ['event_id' => 0]));
+    ok(merge($m, '101', 'mood', 1, '', ['event_id' => 0]));
+    ok(merge($m, '101', 'symptoms', 1, '', ['event_id' => 0]));
+    ok(ajax($m, 'finalize-merge', ['record' => '101', 'event_id' => 0]));
+    $eventIds = array_unique(array_column(array_filter(Fake::$logs, fn($l) => in_array($l['message'], ['Merged field', 'Finalized merge'], true)), 'event_id'));
+    eq([(string)Fake::firstEventId()], array_values($eventIds), 'logs keyed to the real event');
+    eq('merged', statusOf($m, '101'));
 };
 
 // ─── Runner ──────────────────────────────────────────────────────────

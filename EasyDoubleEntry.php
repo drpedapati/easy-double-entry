@@ -164,8 +164,14 @@ class EasyDoubleEntry extends AbstractExternalModule
             // reads would pool rows across events and writes could land in the
             // wrong event
             $payloadEventId = (int)($payload['event_id'] ?? 0);
-            if (REDCap::isLongitudinal() && !$this->isValidEventId($payloadEventId)) {
-                return ['error' => 'A valid event is required for this action'];
+            if (REDCap::isLongitudinal()) {
+                if (!$this->isValidEventId($payloadEventId)) {
+                    return ['error' => 'A valid event is required for this action'];
+                }
+            } else {
+                // Classic projects have exactly one event; normalize so logs are
+                // keyed the same way the dashboard and save hook look them up
+                $payload['event_id'] = $this->getFirstEventId();
             }
         }
 
@@ -543,12 +549,9 @@ class EasyDoubleEntry extends AbstractExternalModule
         // Skip metadata fields, form status fields, and per-instrument excluded fields
         $skipFields = [$recordIdField, 'redcap_event_name', 'redcap_repeat_instrument', 'redcap_repeat_instance'];
         $skipFields = array_merge($skipFields, $this->getExcludedFields($instrument));
-        // Also skip *_complete fields (form completion status — not real data)
-        foreach (array_keys($dd) as $fn) {
-            if (str_ends_with($fn, '_complete')) {
-                $skipFields[] = $fn;
-            }
-        }
+        // Also skip this form's status field (<form>_complete). Only that exact
+        // name: data fields like consent_complete must still be compared.
+        $skipFields[] = $instrument . '_complete';
 
         $fields = [];
         $discrepancyCount = 0;
@@ -795,7 +798,7 @@ class EasyDoubleEntry extends AbstractExternalModule
         }
 
         $recordIdField = REDCap::getRecordIdField();
-        if ($fieldName === $recordIdField || str_ends_with($fieldName, '_complete')) {
+        if ($fieldName === $recordIdField || $fieldName === $instrument . '_complete') {
             return ['success' => false, 'error' => 'This field cannot be merged'];
         }
         if (in_array($fieldName, $this->getExcludedFields($instrument), true)) {
