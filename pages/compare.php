@@ -192,6 +192,7 @@ if ($urlEventId === 0) {
     let pendingMerge = null;
     let unresolvedCount = 0;
     let finalized = false;
+    let finalizeStale = false;
 
     // Form submit
     document.getElementById('ede-compare-form').addEventListener('submit', function(e) {
@@ -247,6 +248,7 @@ if ($urlEventId === 0) {
             currentComparison = result;
             unresolvedCount = result.unresolved_count || 0;
             finalized = !!result.finalized;
+            finalizeStale = !!result.finalize_stale;
 
             if (result.status === 'no_data') {
                 document.getElementById('ede-compare-results').innerHTML =
@@ -317,7 +319,11 @@ if ($urlEventId === 0) {
             }
             btn.disabled = true;
         } else {
-            if (finalized) {
+            if (finalized && finalizeStale) {
+                status.innerHTML = finalizedBadge +
+                    '<span class="text-danger ml-2"><i class="fas fa-exclamation-triangle mr-1"></i>Round data changed since finalization ' +
+                    '(for example an excluded field, or the same edit in both rounds). Re-finalize to update the final entry.</span>';
+            } else if (finalized) {
                 status.innerHTML = finalizedBadge +
                     '<span class="text-muted ml-2">Already finalized. Re-finalize only if you have changed round data or resolutions since.</span>';
             } else {
@@ -529,6 +535,7 @@ if ($urlEventId === 0) {
             btn.innerHTML = '<i class="fas fa-check-double mr-1"></i>Finalize Merge';
             if (result.success) {
                 finalized = true;
+                finalizeStale = false;
                 let note = '<div class="alert alert-success"><i class="fas fa-check-double mr-2"></i>' +
                     '<b>Merge finalized.</b> ';
                 if (result.mode === 'in_place') {

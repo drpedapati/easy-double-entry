@@ -147,6 +147,8 @@ Side-by-side field comparison with match/discrepancy detection:
 
 A resolution only stays valid while the round values it decided between are unchanged. Editing Round 1 or Round 2 afterwards, or changing the **Where should merged values be saved?** setting, sends the affected fields back to unresolved.
 
+After finalizing, any later change to round data — including excluded fields and identical edits to both rounds, which never show up as discrepancies — marks the finalized entry as out of date. The dashboard shows it as **Merge in Progress** with a **Finish Merge** task, and the comparison page asks you to **Re-finalize** so the final entry picks up the change.
+
 After finalizing, Instance 3 contains the verified data alongside the two original entries:
 
 ![Merged Record](docs/images/tut-09-record-merged.png)
@@ -181,7 +183,7 @@ Optional. Use filter rules to show different instruments for different participa
 | **Where should merged values be saved?** | Overwrite Round 1 (Instance 1) or Save to a new Final instance (Instance 3, default) |
 | **Excluded fields on finalize** | Copy excluded (single-entry) fields from Round 1 into the final entry (default), or leave them blank |
 | **Require a comment when resolving discrepancies** | Forces a comment on each merge for audit trail |
-| **Send email when both rounds are complete** | Email address for notification (leave blank to disable). One email per record/instrument/event when both rounds are first complete; after a merge is finalized, one "Needs Re-review" email if a later round edit creates discrepancies that must be resolved again |
+| **Send email when both rounds are complete** | Email address for notification (leave blank to disable). One email per record/instrument/event when both rounds are first complete; after a merge is finalized, one "Needs Re-review" email if a later round edit means the final entry must be re-resolved or re-finalized. Records already being merged when you upgrade are not announced again |
 
 ## Compatibility
 

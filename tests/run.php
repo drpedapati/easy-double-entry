@@ -308,7 +308,7 @@ $tests['notifications: one email when both rounds are complete, no repeats'] = f
     eq(1, count(Fake::$emails), 'resave does not re-send');
 };
 
-$tests['notifications: post-finalize saves only re-notify when the merge is invalidated'] = function () {
+$tests['notifications: post-finalize saves only re-notify when the final entry goes stale'] = function () {
     $m = fixture(['email' => 'coord@example.org']);
     seedDiscrepant($m);
     eq(1, count(Fake::$emails));
@@ -318,15 +318,67 @@ $tests['notifications: post-finalize saves only re-notify when the merge is inva
     ok(ajax($m, 'finalize-merge', ['record' => '101']));
 
     Fake::tick();
-    enterRound($m, '101', 1, ['clin_only' => 'typo fixed']); // excluded field
-    enterRound($m, '101', 2, ['notes' => 'same']);           // no change
-    eq(1, count(Fake::$emails), 'saves that leave the merge valid send nothing');
+    enterRound($m, '101', 2, ['notes' => 'same']); // re-save, no change
+    eq(1, count(Fake::$emails), 'a save that changes nothing sends nothing');
 
     Fake::tick();
     enterRound($m, '101', 2, ['notes' => 'changed after finalize']);
     eq(2, count(Fake::$emails), 'new discrepancy after finalize notifies once');
+    check(str_contains(end(Fake::$emails)['subject'], 'Re-review'), 're-review wording');
     enterRound($m, '101', 2, ['notes' => 'changed again']);
     eq(2, count(Fake::$emails), 'and only once');
+};
+
+$tests['post-finalize edit to an excluded field marks the final entry stale until re-finalized'] = function () {
+    $m = fixture(['email' => 'coord@example.org']);
+    seedDiscrepant($m);
+    ok(merge($m, '101', 'score', 1));
+    ok(merge($m, '101', 'mood', 1));
+    ok(merge($m, '101', 'symptoms', 1));
+    ok(ajax($m, 'finalize-merge', ['record' => '101']));
+    eq('merged', statusOf($m, '101'));
+    $emails = count(Fake::$emails);
+
+    enterRound($m, '101', 1, ['clin_only' => 'R1 clinician (corrected)']);
+    $cmp = ok(ajax($m, 'compare-rounds', ['record' => '101']));
+    eq(true, $cmp['finalize_stale'], 'compare page sees the stale finalize');
+    eq(0, $cmp['unresolved_count'], 'nothing to re-adjudicate');
+    eq('merge_in_progress', statusOf($m, '101'));
+    eq($emails + 1, count(Fake::$emails), 'one re-review email');
+
+    ok(ajax($m, 'finalize-merge', ['record' => '101']));
+    eq('R1 clinician (corrected)', Fake::value('101', FORM, 3, 'clin_only'), 're-finalize copies the correction');
+    eq(false, ok(ajax($m, 'compare-rounds', ['record' => '101']))['finalize_stale']);
+    eq('merged', statusOf($m, '101'));
+};
+
+$tests['post-finalize identical edit to both rounds marks the final entry stale'] = function () {
+    $m = fixture();
+    seedDiscrepant($m);
+    ok(merge($m, '101', 'score', 1));
+    ok(merge($m, '101', 'mood', 1));
+    ok(merge($m, '101', 'symptoms', 1));
+    ok(ajax($m, 'finalize-merge', ['record' => '101']));
+    enterRound($m, '101', 1, ['notes' => 'redone']);
+    enterRound($m, '101', 2, ['notes' => 'redone']);
+    eq('merge_in_progress', statusOf($m, '101'));
+    ok(ajax($m, 'finalize-merge', ['record' => '101']));
+    eq('redone', Fake::value('101', FORM, 3, 'notes'));
+    eq('merged', statusOf($m, '101'));
+};
+
+$tests['legacy cells: no "ready" email for merges that predate notification tracking'] = function () {
+    $m = fixture(['email' => 'coord@example.org']);
+    // Pre-upgrade state: both rounds and an Instance 3, no module log entries
+    Fake::createRecord('101');
+    $e = Fake::firstEventId();
+    Fake::$data[Fake::key('101', $e, FORM, 1)] = ['record_id' => '101', 'score' => '5', FORM . '_complete' => '2'];
+    Fake::$data[Fake::key('101', $e, FORM, 2)] = ['record_id' => '101', 'score' => '5', FORM . '_complete' => '2'];
+    Fake::$data[Fake::key('101', $e, FORM, 3)] = ['record_id' => '101', 'score' => '5'];
+    enterRound($m, '101', 2, ['score' => '5']);
+    eq(0, count(Fake::$emails), 'legacy merged cell stays quiet');
+    enterRound($m, '101', 2, ['score' => '5']);
+    eq(0, count(Fake::$emails), 'and stays quiet');
 };
 
 $tests['notification markers of other projects are untouched'] = function () {

@@ -17,6 +17,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     private array $userRightsCache = [];
     private array $dictionaryCache = [];
     private array $excludedFieldsCache = [];
+    private array $superUserCache = [];
 
     // ─── Hooks ───────────────────────────────────────────────────────
 
@@ -107,16 +108,24 @@ class EasyDoubleEntry extends AbstractExternalModule
         // one more only if a round edit actually invalidates the finalized
         // merge — routine re-saves and excluded-field fixes stay quiet.
         $lastNotice = $this->latestLogId('DDE notification sent', $project_id, $record, $instrument, $event_id);
+        $lastFinalize = $this->latestLogId('Finalized merge', $project_id, $record, $instrument, $event_id);
         $needsReReview = false;
+        $send = true;
         if ($lastNotice !== null) {
-            $lastFinalize = $this->latestLogId('Finalized merge', $project_id, $record, $instrument, $event_id);
             if ($lastFinalize === null || $lastFinalize < $lastNotice) return;
             $comparison = $this->compareRounds($project_id, $record, $instrument, $event_id);
-            if (($comparison['unresolved_count'] ?? 0) === 0) return;
+            if (($comparison['unresolved_count'] ?? 0) === 0 && empty($comparison['finalize_stale'])) return;
             $needsReReview = true;
+        } elseif ($lastFinalize !== null || $this->finalInstanceExists($project_id, $record, $instrument, $event_id)) {
+            // Cells merged (or being merged) before notification tracking
+            // existed: record the marker without announcing work that is
+            // already underway
+            $send = false;
         }
 
-        $this->sendBothRoundsCompleteNotification($email, $project_id, $record, $instrument, $needsReReview);
+        if ($send) {
+            $this->sendBothRoundsCompleteNotification($email, $project_id, $record, $instrument, $needsReReview);
+        }
         $this->log('DDE notification sent', [
             'record' => $record,
             'instrument' => $instrument,
@@ -278,12 +287,15 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     private function isSuperUser(string $user_id): bool
     {
-        try {
-            $user = $this->framework->getUser($user_id);
-            return $user !== null && method_exists($user, 'isSuperUser') && $user->isSuperUser();
-        } catch (\Throwable $e) {
-            return false;
+        if (!isset($this->superUserCache[$user_id])) {
+            try {
+                $user = $this->framework->getUser($user_id);
+                $this->superUserCache[$user_id] = $user !== null && method_exists($user, 'isSuperUser') && $user->isSuperUser();
+            } catch (\Throwable $e) {
+                $this->superUserCache[$user_id] = false;
+            }
         }
+        return $this->superUserCache[$user_id];
     }
 
     /**
@@ -426,6 +438,29 @@ class EasyDoubleEntry extends AbstractExternalModule
     }
 
     /**
+     * Whether Instance 3 exists for this cell (copy mode only — in
+     * merge-to-Instance-1 mode Instance 3 is not used).
+     */
+    private function finalInstanceExists(int $project_id, string $record, string $instrument, int $event_id): bool
+    {
+        if ($this->getMergeTargetInstance() !== self::FINAL_INSTANCE) return false;
+        $rows = json_decode(REDCap::getData([
+            'project_id' => $project_id,
+            'records' => [$record],
+            'fields' => [REDCap::getRecordIdField(), $instrument . '_complete'],
+            'events' => [$event_id],
+            'return_format' => 'json'
+        ]), true) ?: [];
+        foreach ($rows as $row) {
+            if (($row['redcap_repeat_instrument'] ?? '') === $instrument
+                && $this->normalizeRoundInstance($row['redcap_repeat_instance'] ?? null) === self::FINAL_INSTANCE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Fetch the Round 1 and Round 2 data rows for a record + instrument + event.
      * Returns [round1Row, round2Row]; either may be an empty array.
      */
@@ -512,14 +547,14 @@ class EasyDoubleEntry extends AbstractExternalModule
         return $this->buildComparison(
             $record, $instrument, $event_id, $dd, $round1Data, $round2Data,
             fn() => $this->getResolvedFields($project_id, $record, $instrument, $event_id),
-            fn() => $this->isFinalized($project_id, $record, $instrument, $event_id)
+            fn() => $this->getLatestFinalize($project_id, $record, $instrument, $event_id)
         );
     }
 
     /**
      * Comparison of two already-fetched round rows. Resolution log and
-     * finalized flag are supplied lazily so callers holding project-wide
-     * data (the dashboard) avoid per-record queries.
+     * latest finalize entry (or null) are supplied lazily so callers holding
+     * project-wide data (the dashboard) avoid per-record queries.
      */
     private function buildComparison(string $record, string $instrument, int $event_id, array $dd, array $round1Data, array $round2Data, callable $resolvedLog, callable $finalized): array
     {
@@ -607,6 +642,14 @@ class EasyDoubleEntry extends AbstractExternalModule
             }
         }
 
+        // A finalize is stale when any round value it was built from — including
+        // excluded and matching fields, which never show up as discrepancies —
+        // has changed since, so the final entry no longer reflects the rounds
+        $finalizeEntry = $finalized();
+        $finalizeHash = $finalizeEntry['rounds_hash'] ?? null;
+        $finalizeStale = $finalizeHash !== null && $finalizeHash !== ''
+            && !hash_equals($finalizeHash, $this->roundsFingerprint($dd, $instrument, $round1Data, $round2Data));
+
         return array_merge($base, [
             'status' => $status,
             'total_fields' => $totalCompared,
@@ -620,7 +663,8 @@ class EasyDoubleEntry extends AbstractExternalModule
             'fields' => $fields,
             'resolved_fields' => $resolvedNames,
             'unresolved_fields' => $unresolvedFields,
-            'finalized' => $finalized(),
+            'finalized' => $finalizeEntry !== null,
+            'finalize_stale' => $finalizeStale,
             'unresolved_count' => count($unresolvedFields)
         ]);
     }
@@ -669,6 +713,27 @@ class EasyDoubleEntry extends AbstractExternalModule
     private function fingerprint(string $value): string
     {
         return sha1(trim($value));
+    }
+
+    /**
+     * Fingerprint of every writable field in both rounds (excluded fields
+     * included), taken at finalize to detect later round edits.
+     */
+    private function roundsFingerprint(array $dd, string $instrument, array $round1Data, array $round2Data): string
+    {
+        $recordIdField = REDCap::getRecordIdField();
+        $values = [];
+        foreach ($dd as $fieldName => $meta) {
+            if ($fieldName === $recordIdField || $fieldName === $instrument . '_complete') continue;
+            if (($meta['field_type'] ?? '') === 'descriptive') continue;
+            if (!$this->getFieldWritability($meta)[0]) continue;
+            $values[$fieldName] = [
+                trim($this->fieldValue($round1Data, $fieldName, $meta)),
+                trim($this->fieldValue($round2Data, $fieldName, $meta))
+            ];
+        }
+        ksort($values);
+        return sha1(json_encode($values));
     }
 
     /**
@@ -763,25 +828,34 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function isFinalized(int $project_id, string $record, string $instrument, int $event_id): bool
     {
-        $result = $this->queryLogs(
-            "SELECT timestamp WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ?",
-            ['Finalized merge', $project_id, $record, $instrument, $event_id]
-        );
-        return (bool)$result->fetch_assoc();
+        return $this->getLatestFinalize($project_id, $record, $instrument, $event_id) !== null;
     }
 
     /**
-     * Map of finalized merges for the whole project, keyed "record|instrument|event_id".
+     * Latest 'Finalized merge' entry for a cell (with its rounds_hash), or null.
+     */
+    private function getLatestFinalize(int $project_id, string $record, string $instrument, int $event_id): ?array
+    {
+        $result = $this->queryLogs(
+            "SELECT log_id, rounds_hash WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ? ORDER BY log_id DESC LIMIT 1",
+            ['Finalized merge', $project_id, $record, $instrument, $event_id]
+        );
+        return $result->fetch_assoc() ?: null;
+    }
+
+    /**
+     * Latest finalize entry per cell for the whole project, keyed
+     * "record|instrument|event_id".
      */
     private function getFinalizedMap(int $project_id): array
     {
         $result = $this->queryLogs(
-            "SELECT record, instrument, event_id WHERE message = ? AND project_id = ?",
+            "SELECT log_id, record, instrument, event_id, rounds_hash WHERE message = ? AND project_id = ? ORDER BY log_id",
             ['Finalized merge', $project_id]
         );
         $map = [];
         while ($row = $result->fetch_assoc()) {
-            $map[($row['record'] ?? '') . '|' . ($row['instrument'] ?? '') . '|' . ($row['event_id'] ?? '')] = true;
+            $map[($row['record'] ?? '') . '|' . ($row['instrument'] ?? '') . '|' . ($row['event_id'] ?? '')] = $row;
         }
         return $map;
     }
@@ -852,9 +926,7 @@ class EasyDoubleEntry extends AbstractExternalModule
         $result = REDCap::saveData($project_id, 'json', json_encode([$saveRow]), 'overwrite');
 
         if (!empty($result['errors'])) {
-            $errors = $result['errors'];
-            $errorMsg = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string)$errors;
-            return ['success' => false, 'error' => $errorMsg];
+            return ['success' => false, 'error' => $this->formatSaveErrors($result['errors'])];
         }
 
         $this->log("Merged field", [
@@ -972,11 +1044,12 @@ class EasyDoubleEntry extends AbstractExternalModule
         // The finalized entry is by definition Complete
         $saveRow[$instrument . '_complete'] = '2';
 
+        [$hashR1, $hashR2] = $this->getRoundRows($project_id, $record, $instrument, $event_id, array_keys($dd));
+        $roundsHash = $this->roundsFingerprint($dd, $instrument, $hashR1, $hashR2);
+
         $result = REDCap::saveData($project_id, 'json', json_encode([$saveRow]), 'overwrite');
         if (!empty($result['errors'])) {
-            $errors = $result['errors'];
-            $errorMsg = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string)$errors;
-            return ['success' => false, 'error' => $errorMsg];
+            return ['success' => false, 'error' => $this->formatSaveErrors($result['errors'])];
         }
 
         $this->log('Finalized merge', [
@@ -987,6 +1060,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             'copied_matching' => $copiedMatching,
             'copied_excluded' => $copiedExcluded,
             'reapplied_resolutions' => $reappliedResolutions,
+            'rounds_hash' => $roundsHash,
             'mode' => $inPlace ? 'in_place' : 'copy'
         ]);
 
@@ -1018,14 +1092,13 @@ class EasyDoubleEntry extends AbstractExternalModule
 
         $recordIdField = REDCap::getRecordIdField();
 
-        // Check if current user is in a DAG
-        $user = $this->framework->getUser();
-        $rights = $user->getRights();
-        $dagId = $rights['group_id'] ?? null;
+        // DAG and form rights come from the same cached source the AJAX
+        // permission checks use
+        $username = (string)$this->framework->getUser()->getUsername();
+        $dagId = $this->isSuperUser($username) ? null : ($this->getUserRightsCached($username)['group_id'] ?? null);
 
         // Dashboard, stats, and task list only expose instruments the current
         // user has form-level read access to
-        $username = (string)$user->getUsername();
         $ddeInstruments = array_values(array_filter(
             $ddeInstruments,
             fn($f) => $this->userCanReadInstrument($username, $f)
@@ -1165,8 +1238,9 @@ class EasyDoubleEntry extends AbstractExternalModule
                         }
                     }
 
-                    // Post-finalize edits to R1/R2 invalidate resolutions; demote
-                    // "merged" so dashboard/tasks match Compare & Merge
+                    // Post-finalize edits to R1/R2 invalidate resolutions or the
+                    // finalize itself; demote "merged" so dashboard/tasks match
+                    // Compare & Merge
                     if ($status === 'merged' && $hasR1 && $hasR2) {
                         $allResolutions ??= $this->getAllResolutions($project_id);
                         $cellKey = $rid . '|' . $instName . '|' . $eventId;
@@ -1176,9 +1250,9 @@ class EasyDoubleEntry extends AbstractExternalModule
                             $roundRows[$rid][$instName][$eventName][self::ROUND_1] ?? [],
                             $roundRows[$rid][$instName][$eventName][self::ROUND_2] ?? [],
                             static fn() => $allResolutions[$cellKey] ?? [],
-                            static fn() => true
+                            static fn() => $finalizedMap[$cellKey] ?? null
                         );
-                        if (($cmp['unresolved_count'] ?? 0) > 0) {
+                        if (($cmp['unresolved_count'] ?? 0) > 0 || !empty($cmp['finalize_stale'])) {
                             $status = 'merge_in_progress';
                         }
                     }
@@ -1468,9 +1542,7 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     private function isValidEventId(int $event_id): bool
     {
-        if ($event_id <= 0) return false;
-        $name = REDCap::getEventNames(true, false, $event_id);
-        return is_string($name) && $name !== '';
+        return $this->uniqueEventName($event_id) !== null;
     }
 
     /**
@@ -1479,9 +1551,19 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     private function buildEventNameForSave(int $event_id): ?string
     {
-        if (!REDCap::isLongitudinal()) return null;
+        return REDCap::isLongitudinal() ? $this->uniqueEventName($event_id) : null;
+    }
+
+    private function uniqueEventName(int $event_id): ?string
+    {
+        if ($event_id <= 0) return null;
         $name = REDCap::getEventNames(true, false, $event_id);
         return (is_string($name) && $name !== '') ? $name : null;
+    }
+
+    private function formatSaveErrors($errors): string
+    {
+        return is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string)$errors;
     }
 
     /**
