@@ -19,11 +19,9 @@ foreach ($module->getDDEInstruments() as $formName) {
 $requestedInstrument = (string)($_GET['instrument'] ?? '');
 $invalidRequestedInstrument = $requestedInstrument !== '' && !in_array($requestedInstrument, $ddeInstruments, true);
 
-// Accept event_id from URL params; fall back to the only event for classic
-// projects. Longitudinal projects must name the event — guessing the first
-// one would compare the wrong visit.
+// Accept event_id from URL params; fall back to first event for classic projects
 $urlEventId = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
-if ($urlEventId === 0 && !\REDCap::isLongitudinal()) {
+if ($urlEventId === 0) {
     $urlEventId = $module->getFirstEventId();
 }
 ?>
