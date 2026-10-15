@@ -45,7 +45,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
 
         let html = '<div class="list-group">';
         tasks.forEach(function(task) {
-            const isCompare = task.action === 'Compare & Merge';
+            const isCompare = task.action === 'Compare & Merge' || task.action === 'Finish Merge';
             const priorityClass = task.priority === 'high' ? 'ede-priority-high' : 'ede-priority-normal';
             const actionClass = isCompare ? 'ede-action-compare' : 'ede-action-enter';
             const icon = isCompare ? 'fa-not-equal' : 'fa-edit';
