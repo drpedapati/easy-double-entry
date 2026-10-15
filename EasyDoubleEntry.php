@@ -15,6 +15,7 @@ class EasyDoubleEntry extends AbstractExternalModule
 
     private ?array $dashboardCache = null;
     private array $userRightsCache = [];
+    private array $dictionaryCache = [];
 
     // ─── Hooks ───────────────────────────────────────────────────────
 
@@ -97,18 +98,29 @@ class EasyDoubleEntry extends AbstractExternalModule
         // Only trigger when Round 1 or Round 2 is saved
         if (!in_array($repeat_instance, [self::ROUND_1, self::ROUND_2])) return;
 
-        // Check if both rounds now have data
-        if ($this->bothRoundsComplete($project_id, $record, $instrument, $event_id)) {
-            $email = $this->getProjectSetting('notification-email');
-            if (!empty($email) && !$this->notificationAlreadySent($project_id, $record, $instrument, $event_id)) {
-                $this->sendBothRoundsCompleteNotification($email, $project_id, $record, $instrument);
-                $this->log('DDE notification sent', [
-                    'record' => $record,
-                    'instrument' => $instrument,
-                    'event_id' => $event_id
-                ]);
-            }
+        $email = $this->getProjectSetting('notification-email');
+        if (empty($email)) return;
+        if (!$this->bothRoundsComplete($project_id, $record, $instrument, $event_id)) return;
+
+        // One email when both rounds first become complete. After a finalize,
+        // one more only if a round edit actually invalidates the finalized
+        // merge — routine re-saves and excluded-field fixes stay quiet.
+        $lastNotice = $this->latestLogId('DDE notification sent', $project_id, $record, $instrument, $event_id);
+        $needsReReview = false;
+        if ($lastNotice !== null) {
+            $lastFinalize = $this->latestLogId('Finalized merge', $project_id, $record, $instrument, $event_id);
+            if ($lastFinalize === null || $lastFinalize < $lastNotice) return;
+            $comparison = $this->compareRounds($project_id, $record, $instrument, $event_id);
+            if (($comparison['unresolved_count'] ?? 0) === 0) return;
+            $needsReReview = true;
         }
+
+        $this->sendBothRoundsCompleteNotification($email, $project_id, $record, $instrument, $needsReReview);
+        $this->log('DDE notification sent', [
+            'record' => $record,
+            'instrument' => $instrument,
+            'event_id' => $event_id
+        ]);
     }
 
     /**
@@ -125,6 +137,8 @@ class EasyDoubleEntry extends AbstractExternalModule
             if ($payloadInstrument === '' || !$this->isConfiguredDDEInstrument($payloadInstrument)) {
                 return ['error' => 'This instrument is not configured for Easy Double Entry in this project'];
             }
+            // Handlers must act on the exact instrument name that was verified
+            $payload['instrument'] = $payloadInstrument;
             // All instrument-scoped actions require at least read rights on the form
             if (!$this->userCanReadInstrument($user_id, $payloadInstrument)) {
                 return ['error' => 'You do not have read access to this instrument'];
@@ -432,8 +446,8 @@ class EasyDoubleEntry extends AbstractExternalModule
 
     /**
      * Map checkbox choice codes to their flat-export column names.
-     * REDCap export convention: fieldname___code with the code lowercased,
-     * '-' converted to '_', and any other non-alphanumerics removed.
+     * Mirrors REDCap's Project::getExtendedCheckboxCodeFormatted: '-' and '.'
+     * become '_', then the code is lowercased and other characters removed.
      */
     private function getCheckboxExportColumns(string $fieldName, string $choicesRaw): array
     {
@@ -442,9 +456,8 @@ class EasyDoubleEntry extends AbstractExternalModule
             $parts = explode(',', $choice, 2);
             $code = trim($parts[0]);
             if ($code === '') continue;
-            $sanitized = strtolower($code);
-            $sanitized = str_replace('-', '_', $sanitized);
-            $sanitized = preg_replace('/[^a-z0-9_]/', '', $sanitized);
+            $sanitized = str_replace(['-', '.'], '_', $code);
+            $sanitized = preg_replace('/[^a-z0-9_]/', '', strtolower($sanitized));
             $columns[$code] = $fieldName . '___' . $sanitized;
         }
         return $columns;
@@ -481,10 +494,24 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function compareRounds(int $project_id, string $record, string $instrument, int $event_id): array
     {
-        $dd = REDCap::getDataDictionary($project_id, 'array', false, null, [$instrument]);
-        $recordIdField = REDCap::getRecordIdField();
-
+        $dd = $this->getInstrumentDictionary($project_id, $instrument);
         [$round1Data, $round2Data] = $this->getRoundRows($project_id, $record, $instrument, $event_id, array_keys($dd));
+
+        return $this->buildComparison(
+            $record, $instrument, $event_id, $dd, $round1Data, $round2Data,
+            fn() => $this->getResolvedFields($project_id, $record, $instrument, $event_id),
+            fn() => $this->isFinalized($project_id, $record, $instrument, $event_id)
+        );
+    }
+
+    /**
+     * Comparison of two already-fetched round rows. Resolution log and
+     * finalized flag are supplied lazily so callers holding project-wide
+     * data (the dashboard) avoid per-record queries.
+     */
+    private function buildComparison(string $record, string $instrument, int $event_id, array $dd, array $round1Data, array $round2Data, callable $resolvedLog, callable $finalized): array
+    {
+        $recordIdField = REDCap::getRecordIdField();
 
         $base = [
             'record' => $record,
@@ -527,28 +554,11 @@ class EasyDoubleEntry extends AbstractExternalModule
             if (in_array($fieldName, $skipFields)) continue;
 
             $isCheckbox = $type === 'checkbox';
-
-            if ($isCheckbox) {
-                // Checkbox data lives in field___code export columns, never under
-                // the base field name — compare each choice column
-                $columns = $this->getCheckboxExportColumns($fieldName, $fieldMeta['select_choices_or_calculations'] ?? '');
-                $checked1 = [];
-                $checked2 = [];
-                $match = true;
-                foreach ($columns as $code => $col) {
-                    $c1 = ($round1Data[$col] ?? '') === '1';
-                    $c2 = ($round2Data[$col] ?? '') === '1';
-                    if ($c1) $checked1[] = $code;
-                    if ($c2) $checked2[] = $code;
-                    if ($c1 !== $c2) $match = false;
-                }
-                $val1 = implode(', ', $checked1);
-                $val2 = implode(', ', $checked2);
-            } else {
-                $val1 = $round1Data[$fieldName] ?? '';
-                $val2 = $round2Data[$fieldName] ?? '';
-                $match = $this->valuesMatch($val1, $val2);
-            }
+            $val1 = $this->fieldValue($round1Data, $fieldName, $fieldMeta);
+            $val2 = $this->fieldValue($round2Data, $fieldName, $fieldMeta);
+            // Checkbox values are the sorted list of checked codes, so string
+            // equality is per-choice equality
+            $match = $isCheckbox ? $val1 === $val2 : $this->valuesMatch($val1, $val2);
 
             $totalCompared++;
             if (!$match) $discrepancyCount++;
@@ -572,16 +582,16 @@ class EasyDoubleEntry extends AbstractExternalModule
         $status = $discrepancyCount === 0 ? 'concordant' : 'discrepant';
 
         // Resolution state from the module audit log (survives page reloads).
-        // A resolution is only honored if the round values it adjudicated are
-        // still the current round values — editing Round 1 or Round 2 after a
-        // resolution invalidates it so the field must be re-adjudicated.
-        $resolvedLog = $this->getResolvedFields($project_id, $record, $instrument, $event_id);
+        // A resolution is only honored while the round values it adjudicated
+        // are unchanged and it was written to the current merge target.
+        $resolved = $resolvedLog();
+        $targetInstance = $this->getMergeTargetInstance();
         $resolvedNames = [];
         $unresolvedFields = [];
         foreach ($fields as $f) {
             if ($f['match'] || !$f['merge_writable']) continue;
-            $entry = $resolvedLog[$f['field_name']] ?? null;
-            if ($entry !== null && $this->resolutionStillValid($entry, $f['round1_value'], $f['round2_value'])) {
+            $entry = $resolved[$f['field_name']] ?? null;
+            if ($entry !== null && $this->resolutionStillValid($entry, $f['round1_value'], $f['round2_value'], $targetInstance)) {
                 $resolvedNames[] = $f['field_name'];
             } else {
                 $unresolvedFields[] = $f['field_name'];
@@ -601,47 +611,139 @@ class EasyDoubleEntry extends AbstractExternalModule
             'fields' => $fields,
             'resolved_fields' => $resolvedNames,
             'unresolved_fields' => $unresolvedFields,
-            'finalized' => $this->isFinalized($project_id, $record, $instrument, $event_id),
+            'finalized' => $finalized(),
             'unresolved_count' => count($unresolvedFields)
         ]);
     }
 
     /**
-     * A logged resolution is stale when either round's current value differs
-     * from the snapshot taken at resolution time. Legacy log entries (no
-     * snapshots) are accepted as-is.
+     * A field's comparable value from an export row. Checkboxes live in
+     * field___code columns, never under the base name, and are represented
+     * as the comma-joined list of checked codes.
      */
-    private function resolutionStillValid(array $entry, string $currentR1, string $currentR2): bool
+    private function fieldValue(array $row, string $fieldName, array $fieldMeta): string
     {
+        if (($fieldMeta['field_type'] ?? '') !== 'checkbox') {
+            return (string)($row[$fieldName] ?? '');
+        }
+        $checked = [];
+        foreach ($this->getCheckboxExportColumns($fieldName, $fieldMeta['select_choices_or_calculations'] ?? '') as $code => $col) {
+            if (($row[$col] ?? '') === '1') $checked[] = $code;
+        }
+        return implode(', ', $checked);
+    }
+
+    /**
+     * saveData columns that copy a field's value from a source export row
+     * (every choice column for a checkbox, so unchecked choices are cleared).
+     */
+    private function fieldColumnsFrom(array $sourceRow, string $fieldName, array $fieldMeta): array
+    {
+        if (($fieldMeta['field_type'] ?? '') !== 'checkbox') {
+            return [$fieldName => (string)($sourceRow[$fieldName] ?? '')];
+        }
+        $columns = [];
+        foreach ($this->getCheckboxExportColumns($fieldName, $fieldMeta['select_choices_or_calculations'] ?? '') as $col) {
+            $columns[$col] = ($sourceRow[$col] ?? '') === '1' ? '1' : '0';
+        }
+        return $columns;
+    }
+
+    /**
+     * Data dictionary for one instrument, cached per request.
+     */
+    private function getInstrumentDictionary(int $project_id, string $instrument): array
+    {
+        return $this->dictionaryCache[$instrument] ??= REDCap::getDataDictionary($project_id, 'array', false, null, [$instrument]);
+    }
+
+    private function fingerprint(string $value): string
+    {
+        return sha1(trim($value));
+    }
+
+    /**
+     * A logged resolution is stale when it was written to a different merge
+     * target than the current setting, or when either round's current value
+     * differs from the snapshot taken at resolution time. In merge-to-Instance-1
+     * mode the Round 1 snapshot is the value the merge wrote into Round 1.
+     * Legacy log entries (no snapshots) are accepted as-is.
+     */
+    private function resolutionStillValid(array $entry, string $currentR1, string $currentR2, int $targetInstance): bool
+    {
+        if (($entry['target_instance'] ?? null) !== null && (int)$entry['target_instance'] !== $targetInstance) {
+            return false;
+        }
         $snap1 = $entry['round1_snapshot'];
         $snap2 = $entry['round2_snapshot'];
         if ($snap1 === null && $snap2 === null) return true;
-        return (string)$snap1 === mb_substr($currentR1, 0, 200)
-            && (string)$snap2 === mb_substr($currentR2, 0, 200);
+
+        $r2ok = $entry['round2_hash'] !== null
+            ? hash_equals($entry['round2_hash'], $this->fingerprint($currentR2))
+            : trim((string)$snap2) === trim(mb_substr($currentR2, 0, 200));
+        if (!$r2ok) return false;
+
+        if ($entry['round1_hash'] !== null) {
+            return hash_equals($entry['round1_hash'], $this->fingerprint($currentR1));
+        }
+        // Entries logged before hashes: in-place merges snapshotted Round 1
+        // before overwriting it, so the merged value is what Round 1 now holds
+        $currentPrefix = trim(mb_substr($currentR1, 0, 200));
+        return trim((string)$snap1) === $currentPrefix
+            || ($targetInstance === self::ROUND_1 && trim((string)$entry['value']) === $currentPrefix);
     }
+
+    private const RESOLUTION_LOG_COLUMNS = 'log_id, record, instrument, event_id, field, source_round, target_instance, value, value_complete, round1_snapshot, round2_snapshot, round1_hash, round2_hash, timestamp';
 
     /**
      * Fields already resolved for this record/instrument/event, read from the
      * module log (source of truth for adjudication state).
-     * Returns field_name => ['source_round' => ..., 'timestamp' => ...].
+     * Returns field_name => latest resolution entry.
      */
     public function getResolvedFields(int $project_id, string $record, string $instrument, int $event_id): array
     {
         $result = $this->queryLogs(
-            "SELECT timestamp, field, source_round, round1_snapshot, round2_snapshot WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ? ORDER BY timestamp",
+            "SELECT " . self::RESOLUTION_LOG_COLUMNS . " WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ? ORDER BY log_id",
             ['Merged field', $project_id, $record, $instrument, $event_id]
         );
+        return $this->collectResolutions($result)[$record . '|' . $instrument . '|' . $event_id] ?? [];
+    }
 
+    /**
+     * Every resolution in the project, keyed "record|instrument|event_id" then
+     * field — one query for the dashboard instead of one per record.
+     */
+    private function getAllResolutions(int $project_id): array
+    {
+        $result = $this->queryLogs(
+            "SELECT " . self::RESOLUTION_LOG_COLUMNS . " WHERE message = ? AND project_id = ? ORDER BY log_id",
+            ['Merged field', $project_id]
+        );
+        return $this->collectResolutions($result);
+    }
+
+    /**
+     * Group 'Merged field' log rows (ordered by log_id) by cell and field;
+     * the latest resolution of a field wins. log_id, not timestamp: two
+     * re-resolutions within the same second must still order correctly.
+     */
+    private function collectResolutions($result): array
+    {
         $resolved = [];
         while ($row = $result->fetch_assoc()) {
             $field = $row['field'] ?? '';
             if ($field === '') continue;
-            // Latest resolution wins
-            $resolved[$field] = [
+            $key = ($row['record'] ?? '') . '|' . ($row['instrument'] ?? '') . '|' . ($row['event_id'] ?? '');
+            $resolved[$key][$field] = [
                 'source_round' => $row['source_round'] ?? '',
                 'timestamp' => $row['timestamp'] ?? '',
+                'target_instance' => $row['target_instance'] ?? null,
+                'value' => $row['value'] ?? '',
+                'value_complete' => ($row['value_complete'] ?? '') === '1',
                 'round1_snapshot' => $row['round1_snapshot'] ?? null,
-                'round2_snapshot' => $row['round2_snapshot'] ?? null
+                'round2_snapshot' => $row['round2_snapshot'] ?? null,
+                'round1_hash' => $row['round1_hash'] ?? null,
+                'round2_hash' => $row['round2_hash'] ?? null
             ];
         }
         return $resolved;
@@ -681,7 +783,7 @@ class EasyDoubleEntry extends AbstractExternalModule
      */
     public function mergeField(int $project_id, string $record, string $instrument, int $event_id, string $fieldName, string $value, int $sourceRound, string $comment = ''): array
     {
-        $dd = REDCap::getDataDictionary($project_id, 'array', false, null, [$instrument]);
+        $dd = $this->getInstrumentDictionary($project_id, $instrument);
         if (!array_key_exists($fieldName, $dd)) {
             return ['success' => false, 'error' => 'Field does not belong to this instrument'];
         }
@@ -713,37 +815,29 @@ class EasyDoubleEntry extends AbstractExternalModule
             if (!in_array($sourceRound, [self::ROUND_1, self::ROUND_2], true)) {
                 return ['success' => false, 'error' => 'Checkbox fields must be resolved by choosing Round 1 or Round 2'];
             }
+        } elseif (in_array($sourceRound, [self::ROUND_1, self::ROUND_2], true)) {
+            // Keep R1/R2: copy from server, never trust the browser (stale tab)
+        } else {
+            $sourceRound = 0; // custom value
+        }
+
+        if ($sourceRound !== 0) {
             $sourceRow = $sourceRound === self::ROUND_1 ? $round1Data : $round2Data;
             if (empty($sourceRow)) {
                 return ['success' => false, 'error' => 'Source round has no data for this record'];
             }
-            $columns = $this->getCheckboxExportColumns($fieldName, $fieldMeta['select_choices_or_calculations'] ?? '');
-            $checked = [];
-            $r1Checked = [];
-            $r2Checked = [];
-            foreach ($columns as $code => $col) {
-                $isChecked = ($sourceRow[$col] ?? '') === '1';
-                $saveRow[$col] = $isChecked ? '1' : '0';
-                if ($isChecked) $checked[] = $code;
-                if (($round1Data[$col] ?? '') === '1') $r1Checked[] = $code;
-                if (($round2Data[$col] ?? '') === '1') $r2Checked[] = $code;
-            }
-            $loggedValue = implode(', ', $checked);
-            $snapshot1 = implode(', ', $r1Checked);
-            $snapshot2 = implode(', ', $r2Checked);
+            $saveRow = array_merge($saveRow, $this->fieldColumnsFrom($sourceRow, $fieldName, $fieldMeta));
+            $value = $this->fieldValue($sourceRow, $fieldName, $fieldMeta);
         } else {
-            // Keep R1/R2: copy from server, never trust the browser (stale tab)
-            if (in_array($sourceRound, [self::ROUND_1, self::ROUND_2], true)) {
-                $sourceRow = $sourceRound === self::ROUND_1 ? $round1Data : $round2Data;
-                if (empty($sourceRow)) {
-                    return ['success' => false, 'error' => 'Source round has no data for this record'];
-                }
-                $value = (string)($sourceRow[$fieldName] ?? '');
-            }
             $saveRow[$fieldName] = $value;
-            $loggedValue = mb_substr($value, 0, 200);
-            $snapshot1 = (string)($round1Data[$fieldName] ?? '');
-            $snapshot2 = (string)($round2Data[$fieldName] ?? '');
+        }
+
+        $snapshot1 = $this->fieldValue($round1Data, $fieldName, $fieldMeta);
+        $snapshot2 = $this->fieldValue($round2Data, $fieldName, $fieldMeta);
+        // Merge-to-Instance-1 overwrites Round 1, so the adjudicated state of
+        // Round 1 is the value being written, not the value it held before
+        if ($targetInstance === self::ROUND_1) {
+            $snapshot1 = $value;
         }
 
         $result = REDCap::saveData($project_id, 'json', json_encode([$saveRow]), 'overwrite');
@@ -761,9 +855,13 @@ class EasyDoubleEntry extends AbstractExternalModule
             'field' => $fieldName,
             'source_round' => $sourceRound,
             'target_instance' => $targetInstance,
-            'value' => $loggedValue,
+            // Full value: finalize re-applies custom values from the log
+            'value' => $value,
+            'value_complete' => '1',
             'round1_snapshot' => mb_substr($snapshot1, 0, 200),
             'round2_snapshot' => mb_substr($snapshot2, 0, 200),
+            'round1_hash' => $this->fingerprint($snapshot1),
+            'round2_hash' => $this->fingerprint($snapshot2),
             'comment' => $comment
         ]);
 
@@ -801,33 +899,51 @@ class EasyDoubleEntry extends AbstractExternalModule
 
         $targetInstance = $this->getMergeTargetInstance();
         $inPlace = $targetInstance === self::ROUND_1;
-        $dd = REDCap::getDataDictionary($project_id, 'array', false, null, [$instrument]);
+        $dd = $this->getInstrumentDictionary($project_id, $instrument);
         $saveRow = $this->buildSaveRowHeader($record, $instrument, $event_id, $targetInstance);
 
         $copiedMatching = 0;
         $copiedExcluded = 0;
+        $reappliedResolutions = 0;
         $skippedFields = [];
 
-        // In merge-to-Instance-1 mode the matching and excluded values are already
-        // in place; writing them again would only pollute the data audit log
+        // In merge-to-Instance-1 mode the matching, excluded, and adjudicated
+        // values are already in Round 1 (validity of each resolution checks
+        // that); writing them again would only pollute the data audit log
         if (!$inPlace) {
-            [$round1Data, ] = $this->getRoundRows($project_id, $record, $instrument, $event_id, array_keys($dd));
+            [$round1Data, $round2Data] = $this->getRoundRows($project_id, $record, $instrument, $event_id, array_keys($dd));
+            $resolutions = $this->getResolvedFields($project_id, $record, $instrument, $event_id);
 
             foreach ($comparison['fields'] as $f) {
-                if (!$f['match']) continue; // discrepancies were written via mergeField
                 if (!$f['merge_writable']) {
-                    $skippedFields[] = ['field' => $f['field_name'], 'reason' => $f['merge_skip_reason']];
+                    if ($f['match']) {
+                        $skippedFields[] = ['field' => $f['field_name'], 'reason' => $f['merge_skip_reason']];
+                    }
                     continue;
                 }
-                if ($f['is_checkbox']) {
-                    $columns = $this->getCheckboxExportColumns($f['field_name'], $dd[$f['field_name']]['select_choices_or_calculations'] ?? '');
-                    foreach ($columns as $col) {
-                        $saveRow[$col] = ($round1Data[$col] ?? '') === '1' ? '1' : '0';
-                    }
-                } else {
-                    $saveRow[$f['field_name']] = $f['round1_value'];
+                $meta = $dd[$f['field_name']];
+                if ($f['match']) {
+                    $saveRow = array_merge($saveRow, $this->fieldColumnsFrom($round1Data, $f['field_name'], $meta));
+                    $copiedMatching++;
+                    continue;
                 }
-                $copiedMatching++;
+
+                // Re-apply each adjudication instead of trusting that Instance 3
+                // still holds it (it may have been deleted or hand-edited).
+                // compareRounds verified these resolutions are current.
+                $entry = $resolutions[$f['field_name']];
+                $source = (int)$entry['source_round'];
+                if ($source === self::ROUND_1 || $source === self::ROUND_2) {
+                    $sourceRow = $source === self::ROUND_1 ? $round1Data : $round2Data;
+                    $saveRow = array_merge($saveRow, $this->fieldColumnsFrom($sourceRow, $f['field_name'], $meta));
+                } elseif ($entry['value_complete']) {
+                    $saveRow[$f['field_name']] = $entry['value'];
+                } else {
+                    // Legacy custom resolution logged truncated: leave the
+                    // value mergeField already wrote to Instance 3
+                    continue;
+                }
+                $reappliedResolutions++;
             }
 
             if ($this->shouldCopyExcludedOnFinalize()) {
@@ -838,13 +954,7 @@ class EasyDoubleEntry extends AbstractExternalModule
                     if ($type === 'descriptive') continue;
                     [$writable, ] = $this->getFieldWritability($meta);
                     if (!$writable) continue;
-                    if ($type === 'checkbox') {
-                        foreach ($this->getCheckboxExportColumns($ef, $meta['select_choices_or_calculations'] ?? '') as $col) {
-                            $saveRow[$col] = ($round1Data[$col] ?? '') === '1' ? '1' : '0';
-                        }
-                    } else {
-                        $saveRow[$ef] = (string)($round1Data[$ef] ?? '');
-                    }
+                    $saveRow = array_merge($saveRow, $this->fieldColumnsFrom($round1Data, $ef, $meta));
                     $copiedExcluded++;
                 }
             }
@@ -867,15 +977,9 @@ class EasyDoubleEntry extends AbstractExternalModule
             'target_instance' => $targetInstance,
             'copied_matching' => $copiedMatching,
             'copied_excluded' => $copiedExcluded,
+            'reapplied_resolutions' => $reappliedResolutions,
             'mode' => $inPlace ? 'in_place' : 'copy'
         ]);
-
-        // Clear the notification dedupe marker so a redo of the rounds after
-        // this finalization can trigger a fresh both-rounds-complete email
-        $this->removeLogs(
-            "message = ? AND record = ? AND instrument = ? AND event_id = ?",
-            ['DDE notification sent', $record, $instrument, $event_id]
-        );
 
         $this->dashboardCache = null;
 
@@ -884,6 +988,7 @@ class EasyDoubleEntry extends AbstractExternalModule
             'mode' => $inPlace ? 'in_place' : 'copy',
             'copied_matching' => $copiedMatching,
             'copied_excluded' => $copiedExcluded,
+            'reapplied_resolutions' => $reappliedResolutions,
             'skipped_fields' => $skippedFields
         ];
     }
@@ -961,13 +1066,17 @@ class EasyDoubleEntry extends AbstractExternalModule
         if ($dagId) $ddeParams['groups'] = [$dagId];
         $ddeData = json_decode(REDCap::getData($ddeParams), true);
 
-        // Build event name => event_id map for resolving numeric IDs
+        // Build event name => event_id map for resolving numeric IDs. Classic
+        // projects export no event name and have exactly one event.
+        $longitudinal = REDCap::isLongitudinal();
         $eventNameToId = $this->getEventNameToIdMap();
-        $fallbackEventId = $this->getFirstEventId();
+        $classicEventId = $longitudinal ? 0 : $this->getFirstEventId();
 
         // Per-record instance map: record => instrument => event_name =>
-        // [instance => form_complete value]
+        // [instance => form_complete value], plus the round rows themselves
+        // so "merged" can be re-verified without refetching per record
         $instanceMap = [];
+        $roundRows = [];
         foreach ($ddeData as $row) {
             $rid = $row[$recordIdField];
             $inst = $row['redcap_repeat_instrument'] ?? '';
@@ -975,11 +1084,15 @@ class EasyDoubleEntry extends AbstractExternalModule
             $eventName = $row['redcap_event_name'] ?? '';
             if ($inst !== '' && in_array($inst, $ddeInstruments)) {
                 $instanceMap[$rid][$inst][$eventName][$instNum] = (string)($row[$inst . '_complete'] ?? '');
+                if ($instNum === self::ROUND_1 || $instNum === self::ROUND_2) {
+                    $roundRows[$rid][$inst][$eventName][$instNum] = $row;
+                }
             }
         }
 
         $targetInstance = $this->getMergeTargetInstance();
         $finalizedMap = $this->getFinalizedMap($project_id);
+        $allResolutions = null; // fetched on first "merged" cell
 
         // Build dashboard rows
         $dashboard = [];
@@ -1010,7 +1123,10 @@ class EasyDoubleEntry extends AbstractExternalModule
                     $hasR1 = array_key_exists(self::ROUND_1, $instances);
                     $hasR2 = array_key_exists(self::ROUND_2, $instances);
                     $hasFinal = array_key_exists(self::FINAL_INSTANCE, $instances);
-                    $eventId = $eventNameToId[$eventName] ?? $fallbackEventId;
+                    // An event name that does not resolve cannot be compared or
+                    // linked; never attribute it to some other event
+                    $eventId = $longitudinal ? ($eventNameToId[$eventName] ?? 0) : $classicEventId;
+                    if ($eventId <= 0) continue;
                     $finalizedLogged = isset($finalizedMap[$rid . '|' . $instName . '|' . $eventId]);
 
                     if ($targetInstance === self::FINAL_INSTANCE) {
@@ -1042,8 +1158,17 @@ class EasyDoubleEntry extends AbstractExternalModule
 
                     // Post-finalize edits to R1/R2 invalidate resolutions; demote
                     // "merged" so dashboard/tasks match Compare & Merge
-                    if ($status === 'merged' && $hasR1 && $hasR2 && $eventId > 0) {
-                        $cmp = $this->compareRounds($project_id, $rid, $instName, $eventId);
+                    if ($status === 'merged' && $hasR1 && $hasR2) {
+                        $allResolutions ??= $this->getAllResolutions($project_id);
+                        $cellKey = $rid . '|' . $instName . '|' . $eventId;
+                        $cmp = $this->buildComparison(
+                            (string)$rid, $instName, $eventId,
+                            $this->getInstrumentDictionary($project_id, $instName),
+                            $roundRows[$rid][$instName][$eventName][self::ROUND_1] ?? [],
+                            $roundRows[$rid][$instName][$eventName][self::ROUND_2] ?? [],
+                            static fn() => $allResolutions[$cellKey] ?? [],
+                            static fn() => true
+                        );
                         if (($cmp['unresolved_count'] ?? 0) > 0) {
                             $status = 'merge_in_progress';
                         }
@@ -1408,22 +1533,31 @@ class EasyDoubleEntry extends AbstractExternalModule
         return $Proj?->forms[$formName]['menu'] ?? $formName;
     }
 
-    private function notificationAlreadySent(int $project_id, string $record, string $instrument, int $event_id): bool
+    /**
+     * log_id of the most recent log entry with this message for a cell, or null.
+     */
+    private function latestLogId(string $message, int $project_id, string $record, string $instrument, int $event_id): ?int
     {
         $result = $this->queryLogs(
-            "SELECT timestamp WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ?",
-            ['DDE notification sent', $project_id, $record, $instrument, $event_id]
+            "SELECT log_id WHERE message = ? AND project_id = ? AND record = ? AND instrument = ? AND event_id = ? ORDER BY log_id DESC LIMIT 1",
+            [$message, $project_id, $record, $instrument, $event_id]
         );
-        return (bool)$result->fetch_assoc();
+        $row = $result->fetch_assoc();
+        return $row ? (int)$row['log_id'] : null;
     }
 
-    private function sendBothRoundsCompleteNotification(string $email, int $project_id, string $record, string $instrument): void
+    private function sendBothRoundsCompleteNotification(string $email, int $project_id, string $record, string $instrument, bool $reReview = false): void
     {
         $label = $this->getInstrumentLabel($instrument);
         $safeRecord = htmlspecialchars($record, ENT_QUOTES, 'UTF-8');
         $safeLabel = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
-        $subject = "DDE Ready for Review — Record $safeRecord ($safeLabel)";
-        $body = "Both Round 1 and Round 2 are complete for:<br><br>";
+        if ($reReview) {
+            $subject = "DDE Needs Re-review — Record $safeRecord ($safeLabel)";
+            $body = "A round was edited after the merge was finalized, creating discrepancies that need to be resolved again for:<br><br>";
+        } else {
+            $subject = "DDE Ready for Review — Record $safeRecord ($safeLabel)";
+            $body = "Both Round 1 and Round 2 are complete for:<br><br>";
+        }
         $body .= "<b>Record:</b> $safeRecord<br>";
         $body .= "<b>Instrument:</b> $safeLabel<br><br>";
         $body .= "Please open the DDE Comparison & Merge page to review and adjudicate.";

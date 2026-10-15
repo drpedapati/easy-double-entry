@@ -19,9 +19,11 @@ foreach ($module->getDDEInstruments() as $formName) {
 $requestedInstrument = (string)($_GET['instrument'] ?? '');
 $invalidRequestedInstrument = $requestedInstrument !== '' && !in_array($requestedInstrument, $ddeInstruments, true);
 
-// Accept event_id from URL params; fall back to first event for classic projects
+// Accept event_id from URL params; fall back to the only event for classic
+// projects. Longitudinal projects must name the event — guessing the first
+// one would compare the wrong visit.
 $urlEventId = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
-if ($urlEventId === 0) {
+if ($urlEventId === 0 && !\REDCap::isLongitudinal()) {
     $urlEventId = $module->getFirstEventId();
 }
 ?>
@@ -528,7 +530,8 @@ if ($urlEventId === 0) {
                 if (result.mode === 'in_place') {
                     note += 'Instance 1 now holds the verified entry (merge-to-Round-1 mode) and is marked Complete.';
                 } else {
-                    note += 'Copied ' + result.copied_matching + ' matching field(s)';
+                    note += 'Wrote ' + (result.reapplied_resolutions || 0) + ' adjudicated field(s), copied ' +
+                        result.copied_matching + ' matching field(s)';
                     if (result.copied_excluded > 0) {
                         note += ' and ' + result.copied_excluded + ' excluded field(s) from Round 1';
                     }
