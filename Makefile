@@ -23,7 +23,7 @@ package:
 	@git diff --quiet HEAD -- . ':!dist' || echo "WARNING: uncommitted changes are NOT included (git archive packages HEAD)"
 	mkdir -p $(DIST)
 	git archive --format=zip --prefix=$(MODULE)_v$(VERSION)/ -o $(PKG) HEAD
-	shasum -a 256 $(PKG) | tee $(PKG).sha256
+	cd $(DIST) && shasum -a 256 $(notdir $(PKG)) | tee $(notdir $(PKG)).sha256
 	@unzip -l $(PKG) | tail -1
 	@echo "Package ready: $(PKG)"
 
