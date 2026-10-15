@@ -16,6 +16,7 @@ class EasyDoubleEntry extends AbstractExternalModule
     private ?array $dashboardCache = null;
     private array $userRightsCache = [];
     private array $dictionaryCache = [];
+    private array $excludedFieldsCache = [];
 
     // ─── Hooks ───────────────────────────────────────────────────────
 
@@ -216,6 +217,11 @@ class EasyDoubleEntry extends AbstractExternalModule
      * for a specific instrument.
      */
     public function getExcludedFields(string $instrument): array
+    {
+        return $this->excludedFieldsCache[$instrument] ??= $this->readExcludedFields($instrument);
+    }
+
+    private function readExcludedFields(string $instrument): array
     {
         $configs = $this->framework->getSubSettings('dde-instrument-config') ?? [];
         foreach ($configs as $cfg) {

@@ -143,7 +143,9 @@ Side-by-side field comparison with match/discrepancy detection:
 
 ![All Resolved](docs/images/tut-08-all-resolved.png)
 
-**Finalize Merge** — once every discrepancy is resolved, the Finalize Merge button becomes available. Finalizing copies all matching fields (and, by default, excluded single-entry fields from Round 1) into the final instance and marks the form Complete, so the final instance is a complete record rather than just the resolved differences. Resolution progress is saved as you go — you can leave the page and come back without losing state.
+**Finalize Merge** — once every discrepancy is resolved, the Finalize Merge button becomes available. Finalizing writes every adjudicated value again, copies all matching fields (and, by default, excluded single-entry fields from Round 1) into the final instance, and marks the form Complete, so the final instance is a complete record rather than just the resolved differences. Because adjudicated values are re-written, hand edits made directly to those fields in Instance 3 are overwritten by the recorded resolution — change a resolution on this page instead. Resolution progress is saved as you go — you can leave the page and come back without losing state.
+
+A resolution only stays valid while the round values it decided between are unchanged. Editing Round 1 or Round 2 afterwards, or changing the **Where should merged values be saved?** setting, sends the affected fields back to unresolved.
 
 After finalizing, Instance 3 contains the verified data alongside the two original entries:
 
@@ -179,7 +181,7 @@ Optional. Use filter rules to show different instruments for different participa
 | **Where should merged values be saved?** | Overwrite Round 1 (Instance 1) or Save to a new Final instance (Instance 3, default) |
 | **Excluded fields on finalize** | Copy excluded (single-entry) fields from Round 1 into the final entry (default), or leave them blank |
 | **Require a comment when resolving discrepancies** | Forces a comment on each merge for audit trail |
-| **Send email when both rounds are complete** | Email address for notification (leave blank to disable) |
+| **Send email when both rounds are complete** | Email address for notification (leave blank to disable). One email per record/instrument/event when both rounds are first complete; after a merge is finalized, one "Needs Re-review" email if a later round edit creates discrepancies that must be resolved again |
 
 ## Compatibility
 
@@ -232,6 +234,10 @@ easy_double_entry_v1.1.0/
     ├── tutorial.html        # Visual walkthrough (self-contained HTML)
     └── images/              # Tutorial screenshots
 ```
+
+### Development
+
+`make test` runs the workflow tests in `tests/` (PHP 8+ only, no REDCap server needed). They drive the real module class through data entry, comparison, merge, finalize, and dashboard flows against an in-memory stand-in for REDCap and the External Module framework. `make package` builds the distributable zip; `tests/` is excluded from it.
 
 ## Tutorial
 
