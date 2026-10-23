@@ -11,6 +11,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
 .ede-status-pending { background: #e2e3e5; color: #383d41; }
 .ede-status-partial { background: #fff3cd; color: #856404; }
 .ede-status-ready_to_compare { background: #f8d7da; color: #721c24; }
+.ede-status-merge_in_progress { background: #d1ecf1; color: #0c5460; }
 .ede-status-merged { background: #d4edda; color: #155724; }
 .ede-summary-cards { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
 .ede-summary-card { flex: 1; min-width: 120px; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #dee2e6; }
@@ -41,6 +42,10 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
             <div class="text-muted">Ready to Compare</div>
         </div>
         <div class="ede-summary-card bg-light">
+            <div class="number text-info" id="ede-total-merging">-</div>
+            <div class="text-muted">Merging</div>
+        </div>
+        <div class="ede-summary-card bg-light">
             <div class="number text-success" id="ede-total-merged">-</div>
             <div class="text-muted">Merged</div>
         </div>
@@ -59,6 +64,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
                     <option value="pending">Pending</option>
                     <option value="partial">Partial</option>
                     <option value="ready_to_compare">Ready to Compare</option>
+                    <option value="merge_in_progress">Merge in Progress</option>
                     <option value="merged">Merged</option>
                 </select>
             </div>
@@ -97,12 +103,13 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
     }
 
     function updateStats() {
-        let pending = 0, partial = 0, ready = 0, merged = 0;
+        let pending = 0, partial = 0, ready = 0, merging = 0, merged = 0;
         dashboardData.forEach(row => {
             row.instruments.forEach(inst => {
                 if (inst.status === 'pending') pending++;
                 else if (inst.status === 'partial') partial++;
                 else if (inst.status === 'ready_to_compare') ready++;
+                else if (inst.status === 'merge_in_progress') merging++;
                 else if (inst.status === 'merged') merged++;
             });
         });
@@ -110,6 +117,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
         document.getElementById('ede-total-pending').textContent = pending;
         document.getElementById('ede-total-partial').textContent = partial;
         document.getElementById('ede-total-ready').textContent = ready;
+        document.getElementById('ede-total-merging').textContent = merging;
         document.getElementById('ede-total-merged').textContent = merged;
     }
 
@@ -150,6 +158,7 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
             if (statuses.includes('pending')) overall = 'pending';
             else if (statuses.includes('partial')) overall = 'partial';
             else if (statuses.includes('ready_to_compare')) overall = 'ready_to_compare';
+            else if (statuses.includes('merge_in_progress')) overall = 'merge_in_progress';
 
             html += '<tr>';
             html += '<td><b>' + escapeHtml(row.record) + '</b></td>';
@@ -157,20 +166,23 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
 
             instruments.forEach(function(inst) {
                 const colors = {
-                    pending: '#6c757d', partial: '#ffc107', ready_to_compare: '#dc3545', merged: '#28a745'
+                    pending: '#6c757d', partial: '#ffc107', ready_to_compare: '#dc3545', merge_in_progress: '#17a2b8', merged: '#28a745'
                 };
                 const labels = {
-                    pending: 'Not started', partial: '1 round done', ready_to_compare: 'Compare!', merged: 'Done'
+                    pending: 'Not started', partial: '1 round done', ready_to_compare: 'Compare!', merge_in_progress: 'Finish merge', merged: 'Done'
                 };
                 const color = colors[inst.status] || '#6c757d';
                 const tooltip = inst.instrument_label + ': ' + (labels[inst.status] || inst.status);
-                const isClickable = inst.status === 'ready_to_compare';
+                const isClickable = inst.status === 'ready_to_compare' || inst.status === 'merge_in_progress';
 
-                html += '<span class="ede-instrument-tag" style="background:' + color + '20; color:' + color + '; border:1px solid ' + color + ';"';
-                html += ' title="' + escapeHtml(tooltip) + '"';
+                let style = 'background:' + color + '20; color:' + color + '; border:1px solid ' + color + ';';
+                if (isClickable) style += ' cursor:pointer; font-weight:bold;';
+                html += '<span class="ede-instrument-tag" style="' + style + '"';
+                html += ' title="' + escapeAttr(tooltip) + '"';
                 if (isClickable) {
-                    html += ' onclick="window.location.href=\'' + compareUrl + '&record=' + encodeURIComponent(row.record) + '&instrument=' + encodeURIComponent(inst.instrument) + '&event_id=' + encodeURIComponent(inst.event_id || '') + '\'"';
-                    html += ' style="background:' + color + '20; color:' + color + '; border:1px solid ' + color + '; cursor:pointer; font-weight:bold;"';
+                    html += ' data-ede-record="' + escapeAttr(row.record) + '"';
+                    html += ' data-ede-instrument="' + escapeAttr(inst.instrument) + '"';
+                    html += ' data-ede-event="' + escapeAttr(String(inst.event_id || '')) + '"';
                 }
                 html += '>';
                 html += escapeHtml(inst.instrument_label);
@@ -194,14 +206,36 @@ $jsModuleObj = $module->getJavascriptModuleObjectName();
             pending: 'Pending',
             partial: 'Partial',
             ready_to_compare: 'Ready to Compare',
+            merge_in_progress: 'Merge in Progress',
             merged: 'Merged'
         }[s] || s;
     }
+
+    // Delegated click handler for instrument tags (avoids inline onclick injection)
+    document.getElementById('ede-dash-table').addEventListener('click', function(e) {
+        const tag = e.target.closest('.ede-instrument-tag[data-ede-record]');
+        if (!tag) return;
+        window.location.href = compareUrl +
+            '&record=' + encodeURIComponent(tag.getAttribute('data-ede-record')) +
+            '&instrument=' + encodeURIComponent(tag.getAttribute('data-ede-instrument')) +
+            '&event_id=' + encodeURIComponent(tag.getAttribute('data-ede-event') || '');
+    });
 
     function escapeHtml(str) {
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    // For values placed inside HTML attributes — escapeHtml (textContent
+    // round-trip) does not escape quotes, which would allow attribute breakout
+    function escapeAttr(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     // Filter handlers
