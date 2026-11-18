@@ -148,6 +148,29 @@ function ok(array $result, string $msg = ''): array
 
 $tests = [];
 
+$tests['round banner: the switch link requires an assigned record ID'] = function () {
+    $module = fixture();
+    $banner = function (?string $record, int $instance) use ($module): string {
+        ob_start();
+        try {
+            $module->redcap_data_entry_form_top(Fake::$pid, $record, FORM, 41, null, $instance);
+            return ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+    };
+
+    foreach ([null, ''] as $unassigned) {
+        $html = $banner($unassigned, 1);
+        check(str_contains($html, 'Currently editing: Round 1'), 'show the round before the first save');
+        check(!str_contains($html, 'href='), 'no switch link without a record ID');
+    }
+    $html = html_entity_decode($banner('0', 1));
+    check(str_contains($html, 'id=0&event_id=41&instance=2'), 'zero is an assigned record ID');
+    check(str_contains($banner('101', 2), 'Switch to Round 1'), 'allow the return to Round 1');
+    check(!str_contains($banner('101', 3), 'href='), 'no switch link on the final instance');
+};
+
 $tests['copy mode: full adjudication produces a complete final entry'] = function () {
     $m = fixture();
     seedDiscrepant($m);
