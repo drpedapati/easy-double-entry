@@ -6,18 +6,16 @@ A REDCap External Module that provides double data entry verification without th
 
 ## Installation
 
-No special server permissions required — just standard REDCap admin access.
-
 ### Requirements
 
-- REDCap 13.0+ with PHP 8.0+
-- REDCap admin access (Control Center) to install the module
+- REDCap 13.7.0+ (13.7.3+ for the long-term support release) with PHP 8.0+
+- Access to the server's `modules/` directory to install the files and REDCap Control Center access to enable the module
 
 ### Steps
 
-1. **Download** — clone or download this repo
-2. **Copy to server** — place the folder in your REDCap `modules/` directory as `easy_double_entry_v1.1.1/`
-3. **Enable server-wide** — go to **Control Center > External Modules** and enable Easy Double Entry
+1. **Download** — choose `easy_double_entry_v1.1.2.zip` from the [module releases](https://github.com/drpedapati/easy-double-entry/releases). Do not use the project **Import Module Settings** button. It expects settings, not module software.
+2. **Extract on the server** — extract the ZIP into `modules/`. Check for `modules/easy_double_entry_v1.1.2/config.json`. Keep the previous version folder for rollback.
+3. **Enable the version** — open **Control Center > External Modules**. Enable Easy Double Entry or select **Change Version** for an existing installation. Keep the existing project scope on upgrade.
 4. **Enable on your project** — go to your project > **External Modules** > enable the module
 5. **Configure instruments** — in module settings, choose which instruments need double data entry and optionally list fields to exclude from comparison
 6. **Enable repeating** — in **Project Setup > Repeating Instruments**, enable repeating for those same instruments
@@ -187,7 +185,7 @@ Optional. Use filter rules to show different instruments for different participa
 
 ## Compatibility
 
-- REDCap 13.0+, PHP 8.0+, Framework Version 14
+- External Modules framework version 14: REDCap 13.7.0+ (13.7.3+ for long-term support), PHP 8.0+
 - Works with: classic projects, longitudinal, repeating instruments, DAGs
 - Upgrade-safe: no core modifications, pure External Module
 
@@ -223,7 +221,7 @@ A: Yes. Every field resolution and every finalization is written to the module l
 ## File Structure
 
 ```
-easy_double_entry_v1.1.1/
+easy_double_entry_v1.1.2/
 ├── EasyDoubleEntry.php      # Core module class (hooks, AJAX, comparison, merge)
 ├── config.json              # Module metadata and settings schema
 ├── README.md

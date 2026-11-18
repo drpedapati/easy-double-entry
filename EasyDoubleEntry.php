@@ -77,8 +77,8 @@ class EasyDoubleEntry extends AbstractExternalModule
         }
         echo '</div>';
 
-        if (!$isFinal) {
-            // Link to switch to the other round
+        // REDCap can open a new form before it assigns a record ID.
+        if (!$isFinal && $record !== null && $record !== '') {
             $switchUrl = $this->buildFormUrl($record, $instrument, $event_id, $otherRound);
             echo '<a href="' . htmlspecialchars($switchUrl) . '" class="btn btn-sm btn-outline-secondary">';
             echo '<i class="fas fa-exchange-alt mr-1"></i>Switch to ' . htmlspecialchars($otherLabel);

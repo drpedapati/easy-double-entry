@@ -151,7 +151,7 @@ if ($urlEventId === 0) {
 </div>
 
 <!-- Merge Comment Modal -->
-<div class="modal fade" id="ede-comment-modal" tabindex="-1">
+<div class="modal" id="ede-comment-modal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
